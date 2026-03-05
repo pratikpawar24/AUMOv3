@@ -1,6 +1,7 @@
 node_modules/
 .env
 .env.local
+.env.hugging
 __pycache__/
 *.pyc
 saved_models/
@@ -15,3 +16,6 @@ venv/
 logs/
 .DS_Store
 Thumbs.db
+test_results.txt
+scripts/
+dataset_output/
