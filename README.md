@@ -49,17 +49,17 @@
 **Backend:**
 ```bash
 cd backend
-cp .env.example .env
+cp .env.example .env   # fill in MONGODB_URI, JWT_SECRET
 npm install
-npm run dev
+npm run dev            # runs on :5000
 ```
 
 **Frontend:**
 ```bash
 cd frontend
-cp .env.local.example .env.local
+cp .env.example .env.local   # set NEXT_PUBLIC_API_URL=http://localhost:5000
 npm install
-npm run dev
+npm run dev                  # runs on :3000
 ```
 
 **AI Service:**
@@ -69,10 +69,37 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-### Docker Compose
+### Docker (all services)
 ```bash
 docker-compose up --build
 ```
+
+---
+
+## ☁️ Deployment
+
+### Backend → Render
+1. Go to [render.com](https://render.com) → **New → Blueprint**
+2. Connect repo `pratikpawar24/AUMOv3` — Render auto-detects `render.yaml`
+3. Set these env vars in the Render dashboard:
+   | Variable | Value |
+   |----------|-------|
+   | `MONGODB_URI` | Your MongoDB Atlas connection string |
+   | `ADMIN_PASSWORD` | Your admin password |
+   | `AI_SERVICE_URL` | URL of your AI service (if deployed separately) |
+4. Deploy → your backend will be live at `https://aumo3-backend.onrender.com`
+
+### Frontend → Vercel
+1. Go to [vercel.com](https://vercel.com) → **New Project**
+2. Import repo `pratikpawar24/AUMOv3`
+3. Set **Root Directory** → `frontend`
+4. Add Environment Variable in Vercel dashboard:
+   | Variable | Value |
+   |----------|-------|
+   | `NEXT_PUBLIC_API_URL` | `https://aumo3-backend.onrender.com` |
+5. Deploy → your frontend will be live at `https://aumo3.vercel.app`
+
+> **Note:** After backend is live on Render, update `CORS_ORIGIN` in Render env vars to your Vercel URL.
 
 ## 📡 Services
 
@@ -130,6 +157,57 @@ S(d,r) = 0.35·RouteOverlap + 0.25·TimeCompat + 0.15·PrefMatch + 0.25·Proximi
 ```
 GreenScore = min(100, RideShare + CO₂Saved + DistSaved + Consistency)
 ```
+
+## ☁️ Deployment
+
+### Vercel (Frontend)
+
+1. Go to [vercel.com](https://vercel.com) → **New Project**
+2. Import `pratikpawar24/AUMOv3`
+3. Set **Root Directory** to `frontend`
+4. Framework Preset: **Next.js**
+5. Add environment variable:
+   ```
+   NEXT_PUBLIC_API_URL = https://aumo3-backend.onrender.com
+   ```
+6. Click **Deploy**
+
+### Render (Backend + AI Service + Database)
+
+**One-Click Deploy:**
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/pratikpawar24/AUMOv3)
+
+**Manual Setup:**
+
+1. Go to [render.com](https://render.com) → **New Blueprint**
+2. Connect `pratikpawar24/AUMOv3` repo
+3. Render reads `render.yaml` and creates:
+   - **aumo3-backend** — Node.js web service (port 5000)
+   - **aumo3-ai** — Python web service (FastAPI)
+   - **aumo3-db** — Free PostgreSQL/MongoDB database
+4. Update `CORS_ORIGIN` on backend to your Vercel frontend URL
+5. Update `NEXT_PUBLIC_API_URL` on Vercel to your Render backend URL
+
+**Or deploy services individually:**
+
+| Service | Root Dir | Build Command | Start Command |
+|---------|----------|---------------|---------------|
+| Backend | `backend` | `npm ci && npm run build` | `npm run start` |
+| AI Service | `ai-service` | `pip install -r requirements.txt` | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+
+### Environment Variables Reference
+
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `MONGODB_URI` | Backend | MongoDB connection string |
+| `JWT_SECRET` | Backend | JWT signing secret (auto-generated on Render) |
+| `AI_SERVICE_URL` | Backend | URL of AI service (e.g. `https://aumo3-ai.onrender.com`) |
+| `CORS_ORIGIN` | Backend | Allowed frontend origin (e.g. `https://aumo3-frontend.vercel.app`) |
+| `ADMIN_EMAIL` | Backend | Admin login email |
+| `ADMIN_PASSWORD` | Backend | Admin login password |
+| `NEXT_PUBLIC_API_URL` | Frontend | Backend API URL |
+| `OSRM_URL` | AI Service | OSRM routing engine URL |
 
 ## 📄 License
 MIT

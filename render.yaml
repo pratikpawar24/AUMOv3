@@ -1,3 +1,7 @@
+# Render Blueprint — AUMOv3 Backend
+# Docs: https://render.com/docs/blueprint-spec
+# This only deploys the backend. Frontend is deployed on Vercel.
+
 services:
   - type: web
     name: aumo3-backend
