@@ -25,7 +25,7 @@ services:
       - key: AI_SERVICE_URL
         sync: false
       - key: CORS_ORIGIN
-        value: https://aumo3.vercel.app
+        value: https://aumov3.vercel.app,https://aumo3.vercel.app,https://*.vercel.app
       - key: ADMIN_EMAIL
         value: admin@aumo3.com
       - key: ADMIN_PASSWORD

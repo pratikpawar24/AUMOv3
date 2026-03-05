@@ -87,7 +87,7 @@ docker-compose up --build
    | `MONGODB_URI` | Your MongoDB Atlas connection string |
    | `ADMIN_PASSWORD` | Your admin password |
    | `AI_SERVICE_URL` | URL of your AI service (if deployed separately) |
-4. Deploy → your backend will be live at `https://aumo3-backend.onrender.com`
+4. Deploy → your backend will be live at `https://**.onrender.com`
 
 ### Frontend → Vercel
 1. Go to [vercel.com](https://vercel.com) → **New Project**
@@ -96,7 +96,7 @@ docker-compose up --build
 4. Add Environment Variable in Vercel dashboard:
    | Variable | Value |
    |----------|-------|
-   | `NEXT_PUBLIC_API_URL` | `https://aumo3-backend.onrender.com` |
+   | `NEXT_PUBLIC_API_URL` | `https://**.onrender.com` |
 5. Deploy → your frontend will be live at `https://aumo3.vercel.app`
 
 > **Note:** After backend is live on Render, update `CORS_ORIGIN` in Render env vars to your Vercel URL.
@@ -168,7 +168,7 @@ GreenScore = min(100, RideShare + CO₂Saved + DistSaved + Consistency)
 4. Framework Preset: **Next.js**
 5. Add environment variable:
    ```
-   NEXT_PUBLIC_API_URL = https://aumo3-backend.onrender.com
+   NEXT_PUBLIC_API_URL = https://**.onrender.com
    ```
 6. Click **Deploy**
 

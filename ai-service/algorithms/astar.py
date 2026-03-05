@@ -683,3 +683,82 @@ def get_traffic_overlay(
         })
 
     return overlay
+
+
+# ═══════════════════════════════════════════════════════════════
+# PART 6: Yen's K-Shortest Paths (alternative routes)
+# ═══════════════════════════════════════════════════════════════
+
+def yen_k_shortest_paths(
+    G: nx.DiGraph,
+    start: int,
+    goal: int,
+    departure_time: datetime,
+    K: int = 3,
+    alpha: float = 0.4,
+    beta: float = 0.3,
+    gamma: float = 0.15,
+    delta: float = 0.15,
+    ch=None,
+) -> List[Dict[str, Any]]:
+    """
+    Yen's algorithm for finding K-shortest loopless paths.
+    
+    Returns up to K diverse alternative routes with different
+    trade-offs between time, distance, and emissions.
+    """
+    # Find first shortest path
+    first = astar_route(G, start, goal, departure_time,
+                        alpha=alpha, beta=beta, gamma=gamma, delta=delta, ch=ch)
+    if first is None:
+        return []
+
+    A = [first]  # List of K shortest paths
+    B = []       # Candidate paths (min-heap by cost)
+
+    for k in range(1, K):
+        prev_path = A[k - 1]["path_nodes"]
+
+        for i in range(len(prev_path) - 1):
+            spur_node = prev_path[i]
+            root_path = prev_path[:i + 1]
+
+            # Temporarily remove edges that share the same root path
+            removed_edges = []
+            for path_dict in A:
+                p = path_dict["path_nodes"]
+                if len(p) > i and p[:i + 1] == root_path:
+                    if i + 1 < len(p) and G.has_edge(p[i], p[i + 1]):
+                        edge_data = G.edges[p[i], p[i + 1]].copy()
+                        G.remove_edge(p[i], p[i + 1])
+                        removed_edges.append((p[i], p[i + 1], edge_data))
+
+            # Find spur path from spur_node to goal
+            spur_result = astar_route(G, spur_node, goal, departure_time,
+                                      alpha=alpha, beta=beta, gamma=gamma, delta=delta, ch=None)
+
+            # Restore removed edges
+            for u, v, data in removed_edges:
+                G.add_edge(u, v, **data)
+
+            if spur_result is not None:
+                # Combine root + spur path
+                total_nodes = root_path[:-1] + spur_result["path_nodes"]
+                # Check for loops
+                if len(total_nodes) == len(set(total_nodes)):
+                    total_dist = spur_result.get("distanceKm", 0)
+                    cost = spur_result.get("cost", float("inf"))
+                    heapq.heappush(B, (cost, id(spur_result), {
+                        **spur_result,
+                        "path_nodes": total_nodes,
+                    }))
+
+        if not B:
+            break
+
+        _, _, best = heapq.heappop(B)
+        # Avoid duplicates
+        if not any(best["path_nodes"] == a["path_nodes"] for a in A):
+            A.append(best)
+
+    return A

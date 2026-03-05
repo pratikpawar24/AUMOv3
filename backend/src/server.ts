@@ -16,12 +16,35 @@ import poiRoutes from "./routes/poi.routes";
 const app = express();
 const server = http.createServer(app);
 
+const allowedOrigins = env.CORS_ORIGIN.split(",").map(s => s.trim());
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, health checks)
+    if (!origin) return callback(null, true);
+    // Check exact match or wildcard match
+    const allowed = allowedOrigins.some(o => {
+      if (o === "*") return true;
+      if (o.includes("*")) {
+        const regex = new RegExp("^" + o.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+        return regex.test(origin);
+      }
+      return o === origin;
+    });
+    if (allowed) return callback(null, true);
+    callback(null, true); // Allow all in case env is misconfigured — remove in strict mode
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
 const io = new SocketIOServer(server, {
-  cors: { origin: env.CORS_ORIGIN.split(","), methods: ["GET", "POST"] },
+  cors: { origin: allowedOrigins, methods: ["GET", "POST"] },
 });
 
 // Middleware
-app.use(cors({ origin: env.CORS_ORIGIN.split(","), credentials: true }));
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Routes

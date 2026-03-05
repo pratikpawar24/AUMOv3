@@ -13,6 +13,7 @@ class ModelConfig:
     forecast_steps: int = 6
     dropout: float = 0.3
     lookback: int = 12
+    seq_len: int = 12
     epochs: int = 30
     batch_size: int = 64
     learning_rate: float = 0.001

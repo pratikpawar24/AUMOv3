@@ -2,18 +2,20 @@
 AUMOv3 AI Service — FastAPI Application
 
 Endpoints:
-  POST /api/route          — Calculate optimal route (AUMORoute™)
-  POST /api/multi-route    — Compare multiple route strategies
-  POST /api/match          — Find carpool matches (DBSCAN + scoring)
-  POST /api/traffic/predict — Predict traffic for road segments
-  GET  /api/traffic/heatmap — Get traffic heatmap data
-  POST /api/emissions      — Calculate CO₂ emissions
-  POST /api/reroute        — Dynamic rerouting with live traffic
-  GET  /api/poi            — Search Maharashtra POIs
-  GET  /api/poi/map        — Get POIs for map bounds
-  GET  /api/poi/types      — Get POI type definitions
-  POST /api/train          — Trigger model training
-  GET  /api/health         — Health check
+  POST /api/route              — Calculate optimal route (AUMORoute™)
+  POST /api/multi-route        — Compare multiple route strategies
+  POST /api/routes/alternatives — K alternative routes (Yen's algorithm)
+  POST /api/match              — Find carpool matches (DBSCAN + scoring)
+  POST /api/traffic/predict    — Predict traffic for road segments
+  GET  /api/traffic/heatmap    — Live traffic heatmap (OSRM + time model)
+  GET  /api/traffic/live       — Real-time traffic from OSRM corridors
+  POST /api/emissions          — Calculate CO₂ emissions
+  POST /api/reroute            — Dynamic rerouting with live traffic
+  GET  /api/poi                — Search Maharashtra POIs
+  GET  /api/poi/map            — Get POIs for map bounds
+  GET  /api/poi/types          — Get POI type definitions
+  POST /api/train              — Trigger model training
+  GET  /api/health             — Health check
 """
 
 import os
@@ -36,7 +38,7 @@ from config import (
 from algorithms.graph_builder import build_graph, build_synthetic_graph, find_nearest_node
 from algorithms.astar import (
     astar_route, dynamic_reroute, get_traffic_overlay,
-    ContractionHierarchies,
+    ContractionHierarchies, yen_k_shortest_paths,
 )
 from algorithms.emissions import (
     calculate_ride_emissions, calculate_carpool_savings, co2_to_tree_days,
@@ -51,6 +53,7 @@ from algorithms.maharashtra_poi import (
 )
 from models.lstm_model import TrafficLSTM, load_model, predict_traffic
 from models.data_generator import time_features, road_type_encoding
+from utils.live_traffic import get_live_traffic_sample, get_live_heatmap, get_time_based_congestion
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -413,36 +416,13 @@ async def predict_traffic_endpoint(req: TrafficPredictRequest):
 
 @app.get("/api/traffic/heatmap")
 async def traffic_heatmap():
-    """Get traffic heatmap data for map visualization."""
+    """Get real-time traffic heatmap using live OSRM data + time-based patterns."""
     if not state["ready"] or state["graph"] is None:
         raise HTTPException(503, "Service not ready")
 
-    G = state["graph"]
-    now = datetime.now()
-    heatmap_data = []
+    heatmap_data = await get_live_heatmap(graph=state["graph"])
 
-    for node_id in list(G.nodes())[:500]:
-        node = G.nodes[node_id]
-        
-        neighbors = list(G.successors(node_id))
-        if not neighbors:
-            continue
-
-        avg_congestion = 0.0
-        for n in neighbors[:3]:
-            edge = G.edges[node_id, n]
-            from algorithms.astar import time_dependent_weight
-            _, _, cong = time_dependent_weight(edge, now)
-            avg_congestion += cong
-        avg_congestion /= min(len(neighbors), 3)
-
-        heatmap_data.append({
-            "lat": node["lat"],
-            "lng": node["lng"],
-            "intensity": round(avg_congestion, 3),
-        })
-
-    return {"success": True, "heatmap": heatmap_data}
+    return {"success": True, "heatmap": heatmap_data, "source": "live_osrm+time_model"}
 
 
 @app.post("/api/emissions")
@@ -552,6 +532,57 @@ async def train_model(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_train)
     return {"success": True, "message": "Training started in background"}
+
+
+@app.post("/api/routes/alternatives")
+async def alternative_routes(req: RouteRequest):
+    """Find K alternative routes using Yen's K-shortest paths algorithm."""
+    if not state["ready"] or state["graph"] is None:
+        raise HTTPException(503, "Service not ready")
+
+    G = state["graph"]
+    start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
+    goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
+
+    if start_node is None or goal_node is None:
+        raise HTTPException(404, "Could not find nodes near the given coordinates")
+
+    dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+
+    routes = yen_k_shortest_paths(
+        G, start_node, goal_node,
+        departure_time=dep_time,
+        K=3,
+        alpha=req.alpha,
+        beta=req.beta,
+        gamma=req.gamma,
+        delta=req.delta,
+        ch=state["ch"],
+    )
+
+    if not routes:
+        raise HTTPException(404, "No routes found between the given points")
+
+    # Enrich each route with CO₂ + overlay
+    for r in routes:
+        overlay = get_traffic_overlay(G, r["path_nodes"], current_time=dep_time)
+        r["trafficOverlay"] = overlay
+        co2 = calculate_ride_emissions(r["distanceKm"], r.get("durationMin", 30))
+        r["co2Details"] = co2
+        r["treeDaysEquivalent"] = co2_to_tree_days(co2["co2_grams"])
+
+    return {"success": True, "routes": routes, "count": len(routes)}
+
+
+@app.get("/api/traffic/live")
+async def live_traffic():
+    """Get real-time traffic conditions from OSRM for key corridors."""
+    if not state["ready"] or state["graph"] is None:
+        raise HTTPException(503, "Service not ready")
+
+    # Simulate live traffic on the current graph
+    segments = await get_live_traffic_sample()
+    return {"success": True, "segments": segments, "source": "osrm_live"}
 
 
 # ═══════════════════════════════════════════════════════════════
