@@ -86,10 +86,22 @@ API_KEY = os.getenv("API_KEY", "aumo-ai-api-key-change-in-production")
 
 IS_HF_SPACE = os.getenv("SPACE_ID") is not None
 API_PORT = int(os.getenv("PORT", "7860" if IS_HF_SPACE else "8000"))
+
+# Sub-service URLs (Space 2 = ML, Space 3 = Data)
+ML_SERVICE_URL = os.getenv(
+    "ML_SERVICE_URL",
+    "https://qrmanual-aumov3-1.hf.space"
+)
+DATA_SERVICE_URL = os.getenv(
+    "DATA_SERVICE_URL",
+    "https://qrmanual-aumov3-2.hf.space"
+)
+
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5000",
     "https://*.vercel.app",
     "https://*.huggingface.co",
+    "https://*.hf.space",
     os.getenv("FRONTEND_URL", "http://localhost:3000"),
 ]

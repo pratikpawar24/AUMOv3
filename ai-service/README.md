@@ -6,18 +6,18 @@ colorTo: blue
 sdk: docker
 pinned: false
 license: mit
-short_description: AI-Powered Urban Mobility Optimizer for Maharashtra
+short_description: AI Gateway - Urban Mobility Optimizer for Maharashtra
 ---
 
-# 🚗 AUMOv3 — AI Service
+# 🚗 AUMOv3 — AI Gateway Service
 
-AI-powered routing, traffic prediction, CO₂ estimation, and carpool matching engine for Maharashtra, India.
+Lightweight AI gateway for routing, emissions, and matching. Proxies ML predictions to Space 2 and POI/place data to Space 3.
 
 ## Features
 - **AUMORoute™** — Custom routing with Contraction Hierarchies + Time-Dependent A*
 - **COPERT IV** — Real-time CO₂ emission estimation
-- **BiLSTM + Attention** — Traffic prediction model
 - **DBSCAN + Scoring** — Smart carpool matching
+- **Proxy** — Forwards ML and data requests to dedicated microservices
 - **200+ Maharashtra POIs** — Bus stands, junctions, landmarks
 
 ## API Endpoints

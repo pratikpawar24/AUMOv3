@@ -1,39 +1,50 @@
 """
-AUMOv3 AI Service — FastAPI Application
+AUMOv3 AI Gateway Service — FastAPI Application (Space 1)
+
+Lightweight gateway that handles routing, emissions, and matching locally,
+while proxying ML predictions to Space 2 (AUMOV3.1) and
+POI/places requests to Space 3 (AUMOv3.2).
+
+NO PyTorch dependency — fast startup for HuggingFace Spaces.
 
 Endpoints:
   POST /api/route              — Calculate optimal route (AUMORoute™)
   POST /api/multi-route        — Compare multiple route strategies
   POST /api/routes/alternatives — K alternative routes (Yen's algorithm)
   POST /api/match              — Find carpool matches (DBSCAN + scoring)
-  POST /api/traffic/predict    — Predict traffic for road segments
+  POST /api/traffic/predict    — Proxy to ML service (Space 2)
   GET  /api/traffic/heatmap    — Live traffic heatmap (OSRM + time model)
   GET  /api/traffic/live       — Real-time traffic from OSRM corridors
   POST /api/emissions          — Calculate CO₂ emissions
   POST /api/reroute            — Dynamic rerouting with live traffic
-  GET  /api/poi                — Search Maharashtra POIs
-  GET  /api/poi/map            — Get POIs for map bounds
-  GET  /api/poi/types          — Get POI type definitions
-  POST /api/train              — Trigger model training
+  GET  /api/poi                — Proxy to Data service (Space 3)
+  GET  /api/poi/map            — Proxy to Data service (Space 3)
+  GET  /api/poi/types          — Proxy to Data service (Space 3)
+  GET  /api/poi/cities         — Proxy to Data service (Space 3)
+  POST /api/places/search      — Proxy to Data service (Space 3)
+  GET  /api/places/nearby      — Proxy to Data service (Space 3)
+  GET  /api/places/stops       — Proxy to Data service (Space 3)
+  POST /api/train              — Proxy to ML service (Space 2)
   GET  /api/health             — Health check
 """
 
 import os
 import asyncio
-import traceback
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-import torch
-import numpy as np
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import httpx
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
 from config import (
     model_config, graph_config, routing_config,
-    CORS_ORIGINS, API_PORT, MODEL_PATH,
+    CORS_ORIGINS, API_PORT,
+    ML_SERVICE_URL, DATA_SERVICE_URL,
 )
 from algorithms.graph_builder import build_graph, build_synthetic_graph, find_nearest_node
 from algorithms.astar import (
@@ -44,16 +55,13 @@ from algorithms.emissions import (
     calculate_ride_emissions, calculate_carpool_savings, co2_to_tree_days,
 )
 from algorithms.matching import (
-    find_matches, batch_match,
+    find_matches,
     RideOffer, RideRequest,
 )
-from algorithms.maharashtra_poi import (
-    search_pois, get_pois_for_map, get_poi_types, get_cities,
-    ALL_MAHARASHTRA_POIS,
-)
-from models.lstm_model import TrafficLSTM, load_model, predict_traffic
-from models.data_generator import time_features, road_type_encoding
-from utils.live_traffic import get_live_traffic_sample, get_live_heatmap, get_time_based_congestion
+from utils.live_traffic import get_live_traffic_sample, get_live_heatmap
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("aumov3-gateway")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -61,77 +69,99 @@ from utils.live_traffic import get_live_traffic_sample, get_live_heatmap, get_ti
 # ═══════════════════════════════════════════════════════════════
 
 app = FastAPI(
-    title="AUMOv3 AI Service",
+    title="AUMOv3 AI Gateway",
     description="AI-powered routing, traffic prediction, and carpool matching for Maharashtra",
     version="3.0.0",
+    docs_url="/docs",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS if isinstance(CORS_ORIGINS, list) else CORS_ORIGINS.split(",") if CORS_ORIGINS else ["*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global state
+# Global state — NO PyTorch, NO model
 state = {
     "graph": None,
     "ch": None,
-    "model": None,
-    "device": "cuda" if torch.cuda.is_available() else "cpu",
     "ready": False,
-    "training": False,
 }
 
 
 # ═══════════════════════════════════════════════════════════════
-# Startup
+# Startup — lightweight, no PyTorch
 # ═══════════════════════════════════════════════════════════════
 
 @app.on_event("startup")
 async def startup():
-    """Initialize graph, model, and CH preprocessing."""
-    print("\n" + "=" * 60)
-    print("  AUMOv3 AI Service Starting...")
-    print("=" * 60)
+    """Initialize graph and CH preprocessing (no ML model loading)."""
+    logger.info("=" * 60)
+    logger.info("  AUMOv3 AI Gateway Starting...")
+    logger.info(f"  ML Service: {ML_SERVICE_URL}")
+    logger.info(f"  Data Service: {DATA_SERVICE_URL}")
+    logger.info("=" * 60)
 
     # Build road graph
     try:
-        print("[Startup] Building road graph...")
+        logger.info("[Startup] Building road graph...")
         G = await build_graph()
         if G is None or len(G.nodes()) == 0:
-            print("[Startup] OSM fetch failed, using synthetic graph")
+            logger.warning("[Startup] OSM fetch failed, using synthetic graph")
             G = build_synthetic_graph(graph_config.osm_bbox)
         state["graph"] = G
-        print(f"[Startup] Graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
+        logger.info(f"[Startup] Graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
     except Exception as e:
-        print(f"[Startup] Graph error: {e}, using synthetic")
+        logger.error(f"[Startup] Graph error: {e}, using synthetic")
         state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
 
     # Contraction Hierarchies
     if routing_config.ch_enabled and state["graph"]:
         try:
-            print("[Startup] Running CH preprocessing...")
+            logger.info("[Startup] Running CH preprocessing...")
             ch = ContractionHierarchies(state["graph"])
             ch.preprocess()
             state["ch"] = ch
+            logger.info("[Startup] CH preprocessing done")
         except Exception as e:
-            print(f"[Startup] CH preprocessing error: {e}")
-
-    # Load traffic model
-    try:
-        model = load_model(MODEL_PATH, device=state["device"])
-        state["model"] = model
-    except Exception as e:
-        print(f"[Startup] Model load error: {e}")
-        state["model"] = TrafficLSTM().to(state["device"])
+            logger.warning(f"[Startup] CH preprocessing error: {e}")
 
     state["ready"] = True
-    print(f"\n[Startup] AI Service ready on port {API_PORT}")
-    print(f"[Startup] Device: {state['device']}")
-    print(f"[Startup] POIs loaded: {len(ALL_MAHARASHTRA_POIS)}")
-    print("=" * 60 + "\n")
+    logger.info(f"[Startup] Gateway ready on port {API_PORT}")
+    logger.info("=" * 60)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Proxy Helper
+# ═══════════════════════════════════════════════════════════════
+
+async def proxy_request(
+    service_url: str,
+    path: str,
+    method: str = "GET",
+    json_body: dict = None,
+    params: dict = None,
+) -> dict:
+    """Proxy a request to another service."""
+    url = f"{service_url}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            if method == "GET":
+                resp = await client.get(url, params=params)
+            else:
+                resp = await client.post(url, json=json_body, params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(503, f"Service unavailable at {service_url}")
+    except httpx.TimeoutException:
+        raise HTTPException(504, f"Service timeout at {service_url}")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(e.response.status_code, f"Upstream error: {e.response.text[:200]}")
+    except Exception as e:
+        raise HTTPException(502, f"Proxy error: {str(e)[:200]}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -209,35 +239,46 @@ class TrafficPredictRequest(BaseModel):
     segments: List[Dict]
 
 
-class POISearchRequest(BaseModel):
-    query: str = ""
-    poi_type: str = ""
-    city: str = ""
-    lat: float = 0
-    lng: float = 0
-    radius_km: float = 50
-    limit: int = 50
-
-
 # ═══════════════════════════════════════════════════════════════
-# API Endpoints
+# LOCAL Endpoints (routing, emissions, matching)
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/")
 async def root():
-    return {"service": "AUMOv3 AI", "status": "running", "version": "3.0.0"}
+    return {
+        "service": "AUMOv3 AI Gateway",
+        "version": "3.0.0",
+        "status": "running",
+        "ml_service": ML_SERVICE_URL,
+        "data_service": DATA_SERVICE_URL,
+    }
 
 
 @app.get("/api/health")
 async def health():
+    # Check sub-services health
+    ml_ok = False
+    data_ok = False
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(f"{ML_SERVICE_URL}/api/health")
+            ml_ok = r.status_code == 200
+    except:
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(f"{DATA_SERVICE_URL}/api/health")
+            data_ok = r.status_code == 200
+    except:
+        pass
+
     return {
         "status": "healthy" if state["ready"] else "initializing",
         "graph_nodes": len(state["graph"].nodes()) if state["graph"] else 0,
         "graph_edges": len(state["graph"].edges()) if state["graph"] else 0,
         "ch_ready": state["ch"] is not None,
-        "model_loaded": state["model"] is not None,
-        "device": state["device"],
-        "poi_count": len(ALL_MAHARASHTRA_POIS),
+        "ml_service": "connected" if ml_ok else "unavailable",
+        "data_service": "connected" if data_ok else "unavailable",
         "version": "3.0.0",
     }
 
@@ -249,10 +290,9 @@ async def calculate_route(req: RouteRequest):
         raise HTTPException(503, "Service not ready")
 
     G = state["graph"]
-    
     start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
     goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
-    
+
     if start_node is None or goal_node is None:
         raise HTTPException(404, "Could not find nodes near the given coordinates")
 
@@ -266,18 +306,16 @@ async def calculate_route(req: RouteRequest):
         ch=state["ch"],
         avoid_congested=req.avoid_congested,
     )
-    
+
     if result is None:
         raise HTTPException(404, "No route found between the given points")
 
-    # Add traffic overlay
     overlay = get_traffic_overlay(G, result["path_nodes"], current_time=dep_time)
     result["trafficOverlay"] = overlay
-    
-    # CO₂ info
+
     co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
     result["co2Details"] = co2
-    result["treeDaysEquivalent"] = co2_to_tree_days(co2["co2_grams"])
+    result["treeDaysEquivalent"] = co2_to_tree_days(co2.get("co2_grams", 0))
 
     return {"success": True, "route": result}
 
@@ -291,18 +329,18 @@ async def multi_route(req: MultiRouteRequest):
     G = state["graph"]
     start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
     goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
-    
+
     if start_node is None or goal_node is None:
         raise HTTPException(404, "Could not find nodes near coordinates")
 
     dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
 
     strategies = {
-        "fastest":    {"alpha": 0.7, "beta": 0.1, "gamma": 0.1, "delta": 0.1},
-        "eco":        {"alpha": 0.2, "beta": 0.6, "gamma": 0.1, "delta": 0.1},
-        "shortest":   {"alpha": 0.1, "beta": 0.1, "gamma": 0.7, "delta": 0.1},
-        "balanced":   {"alpha": 0.4, "beta": 0.3, "gamma": 0.15, "delta": 0.15},
-        "low_traffic":{"alpha": 0.2, "beta": 0.1, "gamma": 0.1, "delta": 0.6},
+        "fastest":     {"alpha": 0.7, "beta": 0.1, "gamma": 0.1, "delta": 0.1},
+        "eco":         {"alpha": 0.2, "beta": 0.6, "gamma": 0.1, "delta": 0.1},
+        "shortest":    {"alpha": 0.1, "beta": 0.1, "gamma": 0.7, "delta": 0.1},
+        "balanced":    {"alpha": 0.4, "beta": 0.3, "gamma": 0.15, "delta": 0.15},
+        "low_traffic": {"alpha": 0.2, "beta": 0.1, "gamma": 0.1, "delta": 0.6},
     }
 
     routes = {}
@@ -375,56 +413,6 @@ async def match_rides(req: MatchBatchRequest):
     }
 
 
-@app.post("/api/traffic/predict")
-async def predict_traffic_endpoint(req: TrafficPredictRequest):
-    """Predict traffic for road segments."""
-    if state["model"] is None:
-        raise HTTPException(503, "Model not loaded")
-
-    model = state["model"]
-    device = state["device"]
-    results = []
-
-    for seg in req.segments:
-        now = datetime.now()
-        tf = time_features(now)
-        speed = seg.get("current_speed", 40) / 120.0
-        volume = seg.get("current_volume", 500) / 2200.0
-        congestion = seg.get("current_congestion", 0.3)
-        rt = road_type_encoding(seg.get("road_type", "primary"))
-
-        feature_vec = [
-            speed, volume, congestion,
-            tf["hour_sin"], tf["hour_cos"],
-            tf["day_sin"], tf["day_cos"],
-            tf["is_weekend"], tf["is_holiday"],
-            rt,
-        ]
-        
-        seq = torch.tensor([feature_vec] * model_config.seq_len, dtype=torch.float32)
-        pred = predict_traffic(model, seq, device)
-        
-        results.append({
-            "segment_id": seg.get("id", "unknown"),
-            "predicted_speed": round(pred["speed"], 1),
-            "predicted_volume": round(pred["volume"], 0),
-            "congestion_level": round(pred["congestion"], 3),
-        })
-
-    return {"success": True, "predictions": results}
-
-
-@app.get("/api/traffic/heatmap")
-async def traffic_heatmap():
-    """Get real-time traffic heatmap using live OSRM data + time-based patterns."""
-    if not state["ready"] or state["graph"] is None:
-        raise HTTPException(503, "Service not ready")
-
-    heatmap_data = await get_live_heatmap(graph=state["graph"])
-
-    return {"success": True, "heatmap": heatmap_data, "source": "live_osrm+time_model"}
-
-
 @app.post("/api/emissions")
 async def calculate_emissions(req: EmissionRequest):
     """Calculate CO₂ emissions and carpool savings."""
@@ -432,12 +420,12 @@ async def calculate_emissions(req: EmissionRequest):
         req.distance_km, req.distance_km / req.avg_speed_kmh * 60,
         req.fuel_type,
     )
-    
+
     savings = calculate_carpool_savings(
         req.distance_km, req.num_passengers, req.avg_speed_kmh, req.fuel_type,
     )
-    
-    tree_days = co2_to_tree_days(emissions["co2_grams"])
+
+    tree_days = co2_to_tree_days(emissions.get("co2_grams", 0))
 
     return {
         "success": True,
@@ -475,65 +463,6 @@ async def reroute(req: RerouteRequest):
     return {"success": True, "route": result}
 
 
-@app.get("/api/poi")
-async def poi_search(
-    query: str = "",
-    poi_type: str = "",
-    city: str = "",
-    lat: float = 0,
-    lng: float = 0,
-    radius_km: float = 50,
-    limit: int = 50,
-):
-    """Search Maharashtra POIs."""
-    results = search_pois(query, poi_type, city, lat, lng, radius_km, limit)
-    return {"success": True, "pois": results, "total": len(results)}
-
-
-@app.get("/api/poi/map")
-async def poi_for_map(
-    south: float = 15.6,
-    north: float = 21.5,
-    west: float = 72.6,
-    east: float = 80.9,
-    types: str = "",
-    limit: int = 200,
-):
-    """Get POIs within map bounds."""
-    bounds = {"south": south, "north": north, "west": west, "east": east}
-    type_list = [t.strip() for t in types.split(",") if t.strip()] if types else None
-    results = get_pois_for_map(bounds, type_list, limit)
-    return {"success": True, "pois": results, "total": len(results)}
-
-
-@app.get("/api/poi/types")
-async def poi_types():
-    """Get POI type definitions for frontend."""
-    return {"success": True, "types": get_poi_types(), "cities": get_cities()}
-
-
-@app.post("/api/train")
-async def train_model(background_tasks: BackgroundTasks):
-    """Trigger model training in background."""
-    if state["training"]:
-        raise HTTPException(409, "Training already in progress")
-
-    def _train():
-        state["training"] = True
-        try:
-            from models.trainer import Trainer
-            trainer = Trainer(device=state["device"])
-            trainer.train(epochs=30, num_samples=3000)
-            state["model"] = trainer.model
-        except Exception as e:
-            print(f"[Train] Error: {e}")
-        finally:
-            state["training"] = False
-
-    background_tasks.add_task(_train)
-    return {"success": True, "message": "Training started in background"}
-
-
 @app.post("/api/routes/alternatives")
 async def alternative_routes(req: RouteRequest):
     """Find K alternative routes using Yen's K-shortest paths algorithm."""
@@ -553,25 +482,32 @@ async def alternative_routes(req: RouteRequest):
         G, start_node, goal_node,
         departure_time=dep_time,
         K=3,
-        alpha=req.alpha,
-        beta=req.beta,
-        gamma=req.gamma,
-        delta=req.delta,
+        alpha=req.alpha, beta=req.beta,
+        gamma=req.gamma, delta=req.delta,
         ch=state["ch"],
     )
 
     if not routes:
         raise HTTPException(404, "No routes found between the given points")
 
-    # Enrich each route with CO₂ + overlay
     for r in routes:
         overlay = get_traffic_overlay(G, r["path_nodes"], current_time=dep_time)
         r["trafficOverlay"] = overlay
         co2 = calculate_ride_emissions(r["distanceKm"], r.get("durationMin", 30))
         r["co2Details"] = co2
-        r["treeDaysEquivalent"] = co2_to_tree_days(co2["co2_grams"])
+        r["treeDaysEquivalent"] = co2_to_tree_days(co2.get("co2_grams", 0))
 
     return {"success": True, "routes": routes, "count": len(routes)}
+
+
+@app.get("/api/traffic/heatmap")
+async def traffic_heatmap():
+    """Get real-time traffic heatmap using live OSRM data + time-based patterns."""
+    if not state["ready"] or state["graph"] is None:
+        raise HTTPException(503, "Service not ready")
+
+    heatmap_data = await get_live_heatmap(graph=state["graph"])
+    return {"success": True, "heatmap": heatmap_data, "source": "live_osrm+time_model"}
 
 
 @app.get("/api/traffic/live")
@@ -580,9 +516,142 @@ async def live_traffic():
     if not state["ready"] or state["graph"] is None:
         raise HTTPException(503, "Service not ready")
 
-    # Simulate live traffic on the current graph
     segments = await get_live_traffic_sample()
     return {"success": True, "segments": segments, "source": "osrm_live"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# PROXIED Endpoints — ML Service (Space 2)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/traffic/predict")
+async def predict_traffic_proxy(req: TrafficPredictRequest):
+    """Proxy traffic prediction to ML service (Space 2)."""
+    return await proxy_request(
+        ML_SERVICE_URL, "/api/traffic/predict",
+        method="POST", json_body=req.dict(),
+    )
+
+
+@app.post("/api/train")
+async def train_model_proxy():
+    """Proxy model training to ML service (Space 2)."""
+    return await proxy_request(
+        ML_SERVICE_URL, "/api/train",
+        method="POST", json_body={},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# PROXIED Endpoints — Data Service (Space 3)
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/poi")
+async def poi_search(
+    query: str = "",
+    type: str = "",
+    city: str = "",
+    lat: float = 0,
+    lng: float = 0,
+    radius_km: float = 50,
+    limit: int = 50,
+):
+    """Proxy POI search to Data service (Space 3)."""
+    params = {k: v for k, v in {
+        "query": query, "type": type, "city": city,
+        "lat": lat, "lng": lng, "radius_km": radius_km, "limit": limit,
+    }.items() if v}
+    return await proxy_request(DATA_SERVICE_URL, "/api/poi", params=params)
+
+
+@app.get("/api/poi/map")
+async def poi_for_map(
+    south: float = 15.6,
+    north: float = 21.5,
+    west: float = 72.6,
+    east: float = 80.9,
+    types: str = "",
+    limit: int = 200,
+):
+    """Proxy POI map to Data service (Space 3)."""
+    return await proxy_request(
+        DATA_SERVICE_URL, "/api/poi/map",
+        method="POST",
+        json_body={"south": south, "north": north, "west": west, "east": east,
+                    "types": [t.strip() for t in types.split(",") if t.strip()],
+                    "limit": limit},
+    )
+
+
+@app.get("/api/poi/types")
+async def poi_types():
+    """Proxy POI types to Data service (Space 3)."""
+    return await proxy_request(DATA_SERVICE_URL, "/api/poi/types")
+
+
+@app.get("/api/poi/cities")
+async def poi_cities():
+    """Proxy POI cities to Data service (Space 3)."""
+    return await proxy_request(DATA_SERVICE_URL, "/api/poi/cities")
+
+
+@app.post("/api/places/search")
+async def places_search(request: Request):
+    """Proxy places search to Data service (Space 3)."""
+    body = await request.json()
+    return await proxy_request(
+        DATA_SERVICE_URL, "/api/places/search",
+        method="POST", json_body=body,
+    )
+
+
+@app.get("/api/places/search")
+async def places_search_get(
+    query: str = "",
+    lat: float = 0,
+    lng: float = 0,
+    radius_km: float = 5,
+    city: str = "",
+    limit: int = 50,
+):
+    """Proxy GET places search to Data service (Space 3)."""
+    params = {k: v for k, v in {
+        "query": query, "lat": lat, "lng": lng,
+        "radius_km": radius_km, "city": city, "limit": limit,
+    }.items() if v}
+    return await proxy_request(DATA_SERVICE_URL, "/api/places/search", params=params)
+
+
+@app.get("/api/places/nearby")
+async def places_nearby(
+    lat: float = Query(...),
+    lng: float = Query(...),
+    radius: int = 5000,
+):
+    """Proxy nearby places to Data service (Space 3)."""
+    return await proxy_request(
+        DATA_SERVICE_URL, "/api/places/nearby",
+        params={"lat": lat, "lng": lng, "radius": radius},
+    )
+
+
+@app.get("/api/places/stops")
+async def places_stops(
+    lat: float = Query(...),
+    lng: float = Query(...),
+    radius: int = 3000,
+):
+    """Proxy nearby stops to Data service (Space 3)."""
+    return await proxy_request(
+        DATA_SERVICE_URL, "/api/places/stops",
+        params={"lat": lat, "lng": lng, "radius": radius},
+    )
+
+
+@app.get("/api/data/stats")
+async def data_stats():
+    """Proxy data stats to Data service (Space 3)."""
+    return await proxy_request(DATA_SERVICE_URL, "/api/data/stats")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -594,6 +663,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=API_PORT,
-        reload=True,
         log_level="info",
     )
