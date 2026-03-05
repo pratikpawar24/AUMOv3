@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { connectDB } from "./config/database";
 import { env } from "./config/env";
 import { Message } from "./models/Message";
+import logger from "./utils/logger";
 
 import userRoutes from "./routes/user.routes";
 import rideRoutes from "./routes/ride.routes";
@@ -47,6 +48,15 @@ const io = new SocketIOServer(server, {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    logger.request(req.method, req.originalUrl, res.statusCode, Date.now() - start);
+  });
+  next();
+});
+
 // Routes
 app.use("/api/users", userRoutes);
 app.use("/api/rides", rideRoutes);
@@ -61,11 +71,11 @@ app.get("/api/health", (_req: express.Request, res: express.Response) => {
 
 // Socket.IO — Chat
 io.on("connection", (socket) => {
-  console.log(`[WS] Connected: ${socket.id}`);
+  logger.info("WebSocket", `Connected: ${socket.id}`);
 
   socket.on("join_room", (roomId: string) => {
     socket.join(roomId);
-    console.log(`[WS] ${socket.id} joined room ${roomId}`);
+    logger.info("WebSocket", `${socket.id} joined room ${roomId}`);
   });
 
   socket.on("leave_room", (roomId: string) => {
@@ -83,7 +93,7 @@ io.on("connection", (socket) => {
       const populated = await msg.populate("sender", "name avatar");
       io.to(data.roomId).emit("new_message", populated);
     } catch (err) {
-      console.error("[WS] Message error:", err);
+      logger.error("WebSocket", "Message send failed", err);
     }
   });
 
@@ -97,7 +107,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log(`[WS] Disconnected: ${socket.id}`);
+    logger.info("WebSocket", `Disconnected: ${socket.id}`);
   });
 });
 
@@ -116,13 +126,15 @@ setInterval(async () => {
 async function start() {
   await connectDB();
   server.listen(Number(env.PORT), () => {
-    console.log(`\n${"=".repeat(50)}`);
-    console.log(`  AUMOv3 Backend running on port ${env.PORT}`);
-    console.log(`  AI Service: ${env.AI_SERVICE_URL}`);
-    console.log(`${"=".repeat(50)}\n`);
+    logger.info("Server", `AUMOv3 Backend running on port ${env.PORT}`);
+    logger.info("Server", `AI Service: ${env.AI_SERVICE_URL}`);
+    logger.info("Server", `CORS Origins: ${env.CORS_ORIGIN}`);
   });
 }
 
-start();
+start().catch((err) => {
+  logger.error("Server", "Failed to start", err);
+  process.exit(1);
+});
 
 export { app, io };

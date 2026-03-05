@@ -1,12 +1,15 @@
 import { Request, Response } from "express";
 import * as ai from "../services/ai.service";
 import { TrafficData } from "../models/TrafficData";
+import logger from "../utils/logger";
 
 export async function getPredictions(req: Request, res: Response) {
   try {
+    logger.info("Traffic", "Predicting traffic", { segments: (req.body.segments || []).length });
     const result = await ai.getTrafficPredictions(req.body.segments || []);
     res.json(result);
   } catch (err: any) {
+    logger.error("Traffic", "Traffic prediction failed", err);
     res.status(500).json({ error: "Traffic prediction failed", details: err.message });
   }
 }
@@ -16,6 +19,7 @@ export async function getHeatmap(_req: Request, res: Response) {
     const result = await ai.getTrafficHeatmap();
     res.json(result);
   } catch (err: any) {
+    logger.error("Traffic", "Heatmap failed", err);
     res.status(500).json({ error: "Heatmap failed", details: err.message });
   }
 }

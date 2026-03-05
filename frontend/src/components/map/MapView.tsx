@@ -26,16 +26,25 @@ const POI_COLORS: Record<string, string> = {
   government: "#2B6CB0",
 };
 
+interface NearbyStop {
+  id: number;
+  name: string;
+  type: string;
+  lat: number;
+  lng: number;
+}
+
 interface MapViewProps {
   route?: RouteResult | null;
   pois?: POI[];
   onMapClick?: (lat: number, lng: number) => void;
   origin?: { lat: number; lng: number } | null;
   destination?: { lat: number; lng: number } | null;
+  nearbyStops?: NearbyStop[];
   className?: string;
 }
 
-export default function MapView({ route, pois = [], onMapClick, origin, destination, className = "" }: MapViewProps) {
+export default function MapView({ route, pois = [], onMapClick, origin, destination, nearbyStops = [], className = "" }: MapViewProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -140,7 +149,27 @@ export default function MapView({ route, pois = [], onMapClick, origin, destinat
       `);
       layersRef.current!.addLayer(circle);
     });
-  }, [route, pois, origin, destination]);
+
+    // Nearby stops markers
+    nearbyStops.forEach((stop) => {
+      const color = stop.type.includes("Railway") ? "#3182CE" : stop.type.includes("Metro") ? "#319795" : "#E53E3E";
+      const circle = L.circleMarker([stop.lat, stop.lng], {
+        radius: 8,
+        fillColor: color,
+        color: "#fff",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.9,
+      });
+      circle.bindPopup(`
+        <div style="min-width:120px">
+          <b style="color:${color}">${stop.name}</b><br/>
+          <small>${stop.type}</small>
+        </div>
+      `);
+      layersRef.current!.addLayer(circle);
+    });
+  }, [route, pois, origin, destination, nearbyStops]);
 
   return (
     <div ref={mapContainerRef} className={`w-full h-full min-h-[400px] rounded-xl overflow-hidden ${className}`} />
