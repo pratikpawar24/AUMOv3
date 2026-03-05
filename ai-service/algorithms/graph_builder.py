@@ -37,9 +37,9 @@ CAPACITY_PER_LANE_HOUR = 1800
 def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
     south, west, north, east = bbox
     return f"""
-    [out:json][timeout:120];
+    [out:json][timeout:30];
     (
-      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|service)$"]({south},{west},{north},{east});
+      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]({south},{west},{north},{east});
     );
     out body;
     >;
@@ -48,10 +48,10 @@ def build_overpass_query(bbox: Tuple[float, float, float, float]) -> str:
 
 
 async def fetch_osm_data(bbox: Tuple[float, float, float, float]) -> Dict[str, Any]:
-    """Fetch road data from Overpass API."""
+    """Fetch road data from Overpass API with short timeout."""
     query = build_overpass_query(bbox)
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(OVERPASS_URL, data={"data": query})
             response.raise_for_status()
             return response.json()

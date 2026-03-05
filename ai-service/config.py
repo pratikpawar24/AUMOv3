@@ -21,12 +21,13 @@ class ModelConfig:
 
 @dataclass
 class GraphConfig:
-    # Maharashtra bounding box (covers major cities)
+    # Pune metro area bounding box (fast Overpass fetch — NOT full Maharashtra)
+    # Full Maharashtra bbox caused 30min+ timeout on HuggingFace
     osm_bbox: Tuple[float, float, float, float] = field(default_factory=lambda: (
-        float(os.getenv("OSM_BBOX", "15.60,72.60,21.50,80.90").split(",")[0]),
-        float(os.getenv("OSM_BBOX", "15.60,72.60,21.50,80.90").split(",")[1]),
-        float(os.getenv("OSM_BBOX", "15.60,72.60,21.50,80.90").split(",")[2]),
-        float(os.getenv("OSM_BBOX", "15.60,72.60,21.50,80.90").split(",")[3]),
+        float(os.getenv("OSM_BBOX", "18.40,73.70,18.70,74.00").split(",")[0]),
+        float(os.getenv("OSM_BBOX", "18.40,73.70,18.70,74.00").split(",")[1]),
+        float(os.getenv("OSM_BBOX", "18.40,73.70,18.70,74.00").split(",")[2]),
+        float(os.getenv("OSM_BBOX", "18.40,73.70,18.70,74.00").split(",")[3]),
     ))
     v_max_kmh: float = 120.0
     bpr_alpha: float = 0.15

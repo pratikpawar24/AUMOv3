@@ -222,12 +222,54 @@ app.add_middleware(
 state = {"model": None, "training": False}
 
 
+def _auto_train():
+    """Auto-train if no saved model found in HF Dataset."""
+    try:
+        print("[ML] No pre-trained model found — auto-training...")
+        state["training"] = True
+        model = TrafficLSTM()
+        X, y = generate_dataset(num_samples=1500)
+
+        from torch.utils.data import DataLoader, TensorDataset
+        ds = TensorDataset(X, y)
+        loader = DataLoader(ds, batch_size=model_config.batch_size, shuffle=True)
+
+        optimizer = torch.optim.AdamW(model.parameters(), lr=model_config.lr)
+        criterion = nn.MSELoss()
+
+        model.train()
+        for epoch in range(model_config.epochs):
+            total_loss = 0
+            for xb, yb in loader:
+                optimizer.zero_grad()
+                pred = model(xb)
+                loss = criterion(pred, yb)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                total_loss += loss.item()
+            if (epoch + 1) % 10 == 0:
+                print(f"[ML][auto] Epoch {epoch + 1}/{model_config.epochs} loss={total_loss / len(loader):.4f}")
+
+        model.eval()
+        state["model"] = model
+        save_model_to_hf(model)
+        print("[ML] Auto-training complete, model saved to HF Dataset")
+    except Exception as e:
+        print(f"[ML] Auto-training error: {e}")
+    finally:
+        state["training"] = False
+
+
 @app.on_event("startup")
 async def startup():
     print("\n" + "=" * 50)
     print("  AUMOv3.1 ML Service Starting...")
     print("=" * 50)
     state["model"] = load_model_from_hf()
+    if state["model"] is None:
+        import threading
+        threading.Thread(target=_auto_train, daemon=True).start()
     print(f"[ML] Service ready on port {API_PORT}")
     print("=" * 50 + "\n")
 
@@ -331,6 +373,144 @@ async def train_model(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_train)
     return {"success": True, "message": "Training started in background"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Live Route Speed Check (OSRM-based, no PyTorch needed)
+# ═══════════════════════════════════════════════════════════════
+
+OSRM_URL = os.getenv("OSRM_URL", "https://router.project-osrm.org")
+
+
+class RouteSpeedRequest(BaseModel):
+    origin_lat: float
+    origin_lng: float
+    dest_lat: float
+    dest_lng: float
+
+
+class MultiSegmentSpeedRequest(BaseModel):
+    segments: List[Dict]  # each: {origin_lat, origin_lng, dest_lat, dest_lng, road_type?}
+
+
+@app.post("/api/traffic/route-speed")
+async def get_route_speed(req: RouteSpeedRequest):
+    """Get real-time route speed & slowness from OSRM."""
+    import httpx as hx
+    try:
+        coords = f"{req.origin_lng},{req.origin_lat};{req.dest_lng},{req.dest_lat}"
+        url = f"{OSRM_URL}/route/v1/driving/{coords}"
+        async with hx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, params={
+                "overview": "full",
+                "annotations": "duration,speed,distance",
+                "geometries": "geojson",
+            })
+            data = resp.json()
+
+        if data.get("code") != "Ok" or not data.get("routes"):
+            raise HTTPException(404, "No route found")
+
+        route = data["routes"][0]
+        distance_m = route["distance"]
+        duration_s = route["duration"]
+        distance_km = distance_m / 1000
+        duration_min = duration_s / 60
+        avg_speed = (distance_km / (duration_s / 3600)) if duration_s > 0 else 0
+
+        # Free-flow estimate (assume avg 50 km/h baseline)
+        free_flow_duration = (distance_km / 50) * 3600
+        delay_factor = duration_s / free_flow_duration if free_flow_duration > 0 else 1.0
+
+        # Congestion level
+        if delay_factor < 1.1:
+            congestion = "free_flow"
+            color = "#22c55e"
+        elif delay_factor < 1.3:
+            congestion = "light"
+            color = "#84cc16"
+        elif delay_factor < 1.6:
+            congestion = "moderate"
+            color = "#eab308"
+        elif delay_factor < 2.0:
+            congestion = "heavy"
+            color = "#f97316"
+        else:
+            congestion = "severe"
+            color = "#ef4444"
+
+        # Extract leg speed annotations
+        legs = route.get("legs", [])
+        speed_annotations = []
+        if legs and "annotation" in legs[0]:
+            speeds = legs[0]["annotation"].get("speed", [])
+            distances = legs[0]["annotation"].get("distance", [])
+            for i, (spd, dist) in enumerate(zip(speeds, distances)):
+                speed_kmh = spd * 3.6  # m/s to km/h
+                speed_annotations.append({
+                    "segment": i,
+                    "speed_kmh": round(speed_kmh, 1),
+                    "distance_m": round(dist, 1),
+                    "slow": speed_kmh < 20,
+                })
+
+        return {
+            "success": True,
+            "distance_km": round(distance_km, 2),
+            "duration_min": round(duration_min, 1),
+            "avg_speed_kmh": round(avg_speed, 1),
+            "delay_factor": round(delay_factor, 2),
+            "congestion": congestion,
+            "congestion_color": color,
+            "geometry": route.get("geometry"),
+            "speed_segments": speed_annotations[:100],
+            "slow_segments": len([s for s in speed_annotations if s.get("slow")]),
+            "total_segments": len(speed_annotations),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"OSRM error: {str(e)[:200]}")
+
+
+@app.post("/api/traffic/live-segments")
+async def live_segment_speeds(req: MultiSegmentSpeedRequest):
+    """Check live speed for multiple road segments via OSRM."""
+    import httpx as hx
+    results = []
+    async with hx.AsyncClient(timeout=10) as client:
+        for seg in req.segments[:20]:  # Limit to 20 to avoid OSRM rate limits
+            try:
+                olat = seg.get("origin_lat", 0)
+                olng = seg.get("origin_lng", 0)
+                dlat = seg.get("dest_lat", 0)
+                dlng = seg.get("dest_lng", 0)
+                if not all([olat, olng, dlat, dlng]):
+                    continue
+                coords = f"{olng},{olat};{dlng},{dlat}"
+                url = f"{OSRM_URL}/route/v1/driving/{coords}"
+                resp = await client.get(url, params={"overview": "false"})
+                data = resp.json()
+                if data.get("code") == "Ok" and data.get("routes"):
+                    r = data["routes"][0]
+                    dist_km = r["distance"] / 1000
+                    dur_s = r["duration"]
+                    spd = (dist_km / (dur_s / 3600)) if dur_s > 0 else 50
+                    free_flow = (dist_km / 50) * 3600
+                    delay = dur_s / free_flow if free_flow > 0 else 1.0
+                    results.append({
+                        "segment_id": seg.get("id", f"seg_{len(results)}"),
+                        "road_type": seg.get("road_type", "primary"),
+                        "distance_km": round(dist_km, 2),
+                        "duration_min": round(dur_s / 60, 1),
+                        "current_speed_kmh": round(spd, 1),
+                        "delay_factor": round(delay, 2),
+                        "is_slow": delay > 1.5,
+                    })
+            except:
+                pass
+
+    return {"success": True, "segments": results, "count": len(results)}
 
 
 if __name__ == "__main__":

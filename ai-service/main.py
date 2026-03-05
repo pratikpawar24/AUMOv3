@@ -655,6 +655,24 @@ async def data_stats():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Live Traffic Speed Proxy (to ML service)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/traffic/route-speed")
+async def traffic_route_speed(request: Request):
+    """Proxy route speed check to ML service (Space 2)."""
+    body = await request.json()
+    return await proxy_request(ML_SERVICE_URL, "/api/traffic/route-speed", method="POST", json_body=body)
+
+
+@app.post("/api/traffic/live-segments")
+async def traffic_live_segments(request: Request):
+    """Proxy live segment speeds to ML service (Space 2)."""
+    body = await request.json()
+    return await proxy_request(ML_SERVICE_URL, "/api/traffic/live-segments", method="POST", json_body=body)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
 

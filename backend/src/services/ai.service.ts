@@ -74,6 +74,19 @@ export async function reroute(params: {
   return res.data;
 }
 
+export async function getRouteSpeed(params: {
+  origin_lat: number; origin_lng: number;
+  dest_lat: number; dest_lng: number;
+}) {
+  const res = await aiClient.post("/api/traffic/route-speed", params);
+  return res.data;
+}
+
+export async function getLiveSegments(segments: any[]) {
+  const res = await aiClient.post("/api/traffic/live-segments", { segments });
+  return res.data;
+}
+
 export async function aiHealth() {
   const res = await aiClient.get("/api/health");
   return res.data;
