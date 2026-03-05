@@ -1,0 +1,50 @@
+  - type: web
+    name: aumo3-frontend
+    env: node
+    plan: free
+    repo: https://github.com/pratikpawar24/AUMOv3
+    branch: main
+    buildCommand: cd frontend && npm ci && npm run build
+    startCommand: cd frontend && npm run start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://aumo3-backend.onrender.com
+
+  - type: web
+    name: aumo3-backend
+    env: node
+    plan: free
+    repo: https://github.com/pratikpawar24/AUMOv3
+    branch: main
+    buildCommand: cd backend && npm ci && npm run build
+    startCommand: cd backend && npm run start
+    envVars:
+      - key: PORT
+        value: "5000"
+      - key: MONGODB_URI
+        value: "mongodb://db:27017/aumo3" # replace with managed DB URI or Render DB service
+      - key: JWT_SECRET
+        value: "change-me"
+      - key: AI_SERVICE_URL
+        value: https://aumo3-ai.onrender.com
+      - key: CORS_ORIGIN
+        value: https://aumo3-frontend.onrender.com
+
+  - type: web
+    name: aumo3-ai
+    env: python
+    plan: free
+    repo: https://github.com/pratikpawar24/AUMOv3
+    branch: main
+    buildCommand: cd ai-service && pip install -r requirements.txt
+    startCommand: cd ai-service && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MODEL_PATH
+        value: /app/models/traffic_model.pt
+      - key: OSRM_URL
+        value: https://router.project-osrm.org
+
+# Notes:
+# - Replace placeholder env values in the Render dashboard after creating services (MONGODB_URI, JWT_SECRET, etc).
+# - For a managed MongoDB, create a Render managed service and update MONGODB_URI accordingly.
+# - You can change the plan or add disks, mounts, and health checks in the Render dashboard.
