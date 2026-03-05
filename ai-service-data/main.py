@@ -909,6 +909,236 @@ async def data_stats():
 
 
 # ═══════════════════════════════════════════════════════════════
+# DATASET BUILDER — runs ON HuggingFace infrastructure
+# ═══════════════════════════════════════════════════════════════
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+BUILDER_STATUS = {"running": False, "progress": "", "category": "", "done": 0, "total": 0, "results": {}}
+
+BUILDER_CATEGORIES = {
+    "bus_stops": '[out:json][timeout:90];(node["highway"="bus_stop"]({bbox});node["amenity"="bus_station"]({bbox});node["public_transport"="stop_position"]["bus"="yes"]({bbox});node["public_transport"="platform"]["bus"="yes"]({bbox});way["amenity"="bus_station"]({bbox}););out center;',
+    "railway_stations": '[out:json][timeout:90];(node["railway"="station"]({bbox});node["railway"="halt"]({bbox});way["railway"="station"]({bbox}););out center;',
+    "metro_stations": '[out:json][timeout:90];(node["railway"="subway_entrance"]({bbox});node["station"="subway"]({bbox}););out center;',
+    "airports": '[out:json][timeout:90];(node["aeroway"="aerodrome"]({bbox});way["aeroway"="aerodrome"]({bbox});node["aeroway"="terminal"]({bbox});node["aeroway"="helipad"]({bbox}););out center;',
+    "police_stations": '[out:json][timeout:90];(node["amenity"="police"]({bbox});way["amenity"="police"]({bbox}););out center;',
+    "fire_stations": '[out:json][timeout:90];(node["amenity"="fire_station"]({bbox});way["amenity"="fire_station"]({bbox}););out center;',
+    "government": '[out:json][timeout:90];(node["office"="government"]({bbox});way["office"="government"]({bbox});node["amenity"="townhall"]({bbox});node["amenity"="courthouse"]({bbox}););out center;',
+    "post_offices": '[out:json][timeout:90];(node["amenity"="post_office"]({bbox});way["amenity"="post_office"]({bbox}););out center;',
+    "hospitals": '[out:json][timeout:90];(node["amenity"="hospital"]({bbox});way["amenity"="hospital"]({bbox});node["amenity"="clinic"]({bbox});node["amenity"="doctors"]({bbox}););out center;',
+    "pharmacies": '[out:json][timeout:90];(node["amenity"="pharmacy"]({bbox});node["shop"="chemist"]({bbox}););out body;',
+    "schools_colleges": '[out:json][timeout:90];(node["amenity"="school"]({bbox});way["amenity"="school"]({bbox});node["amenity"="college"]({bbox});way["amenity"="college"]({bbox});node["amenity"="university"]({bbox});way["amenity"="university"]({bbox});node["amenity"="library"]({bbox});way["amenity"="library"]({bbox}););out center;',
+    "temples_worship": '[out:json][timeout:90];(node["amenity"="place_of_worship"]({bbox});way["amenity"="place_of_worship"]({bbox}););out center;',
+    "shops_malls": '[out:json][timeout:90];(node["shop"="supermarket"]({bbox});node["shop"="mall"]({bbox});way["shop"="mall"]({bbox});node["shop"="convenience"]({bbox});node["shop"="general"]({bbox});node["shop"="clothes"]({bbox});node["shop"="electronics"]({bbox});node["shop"="bakery"]({bbox});node["shop"="mobile_phone"]({bbox});way["shop"="supermarket"]({bbox}););out center;',
+    "cafes_restaurants": '[out:json][timeout:90];(node["amenity"="cafe"]({bbox});node["amenity"="restaurant"]({bbox});node["amenity"="fast_food"]({bbox});node["amenity"="food_court"]({bbox}););out body;',
+    "banks_atm": '[out:json][timeout:90];(node["amenity"="bank"]({bbox});node["amenity"="atm"]({bbox});way["amenity"="bank"]({bbox}););out center;',
+    "fuel_ev": '[out:json][timeout:90];(node["amenity"="fuel"]({bbox});node["amenity"="charging_station"]({bbox});way["amenity"="fuel"]({bbox}););out center;',
+    "hotels_lodging": '[out:json][timeout:90];(node["tourism"="hotel"]({bbox});way["tourism"="hotel"]({bbox});node["tourism"="guest_house"]({bbox});node["tourism"="hostel"]({bbox}););out center;',
+    "entertainment": '[out:json][timeout:90];(node["amenity"="cinema"]({bbox});way["amenity"="cinema"]({bbox});node["leisure"="stadium"]({bbox});way["leisure"="stadium"]({bbox});node["leisure"="sports_centre"]({bbox}););out center;',
+    "parks_gardens": '[out:json][timeout:90];(node["leisure"="park"]({bbox});way["leisure"="park"]({bbox});node["leisure"="garden"]({bbox});way["leisure"="garden"]({bbox});node["tourism"="zoo"]({bbox}););out center;',
+    "tourist_landmarks": '[out:json][timeout:90];(node["tourism"="attraction"]({bbox});way["tourism"="attraction"]({bbox});node["tourism"="museum"]({bbox});node["historic"="monument"]({bbox});way["historic"="monument"]({bbox});node["historic"="fort"]({bbox});way["historic"="fort"]({bbox}););out center;',
+    "villages_towns": '[out:json][timeout:120];(node["place"="village"]({bbox});node["place"="town"]({bbox});node["place"="city"]({bbox});node["place"="suburb"]({bbox});node["place"="hamlet"]({bbox});node["place"="neighbourhood"]({bbox});node["place"="locality"]({bbox}););out body;',
+    "roads_highways": '[out:json][timeout:180];(way["highway"="motorway"]["name"]({bbox});way["highway"="trunk"]["name"]({bbox});way["highway"="primary"]["name"]({bbox});way["highway"="secondary"]["name"]({bbox});way["highway"="tertiary"]["name"]({bbox});way["highway"="residential"]["name"]({bbox}););out center;',
+    "colonies_residential": '[out:json][timeout:120];(way["landuse"="residential"]["name"]({bbox});relation["landuse"="residential"]["name"]({bbox}););out center;',
+    "buildings_named": '[out:json][timeout:180];(way["building"]["name"]({bbox});node["building"]["name"]({bbox}););out center;',
+    "industrial_commercial": '[out:json][timeout:120];(way["landuse"="industrial"]["name"]({bbox});way["landuse"="commercial"]["name"]({bbox});node["office"]["name"]({bbox}););out center;',
+    "water_bodies": '[out:json][timeout:90];(way["natural"="water"]["name"]({bbox});way["waterway"="river"]["name"]({bbox});way["waterway"="canal"]["name"]({bbox}););out center;',
+    "other_amenities": '[out:json][timeout:120];(node["amenity"="parking"]({bbox});node["amenity"="taxi"]({bbox});node["amenity"="car_repair"]({bbox});node["amenity"="marketplace"]({bbox});way["amenity"="marketplace"]({bbox});node["amenity"="community_centre"]({bbox}););out center;',
+}
+
+BUILDER_TAG_MAP = {
+    "bus_stops": "bus_stop", "railway_stations": "railway_station", "metro_stations": "metro_station",
+    "airports": "airport", "police_stations": "police_station", "fire_stations": "fire_station",
+    "government": "government", "post_offices": "post_office", "hospitals": "hospital",
+    "pharmacies": "pharmacy", "schools_colleges": "education", "temples_worship": "worship",
+    "shops_malls": "shopping", "cafes_restaurants": "cafe", "banks_atm": "bank",
+    "fuel_ev": "fuel_station", "hotels_lodging": "hotel", "entertainment": "entertainment",
+    "parks_gardens": "park", "tourist_landmarks": "landmark", "villages_towns": "town",
+    "roads_highways": "road", "colonies_residential": "colony", "buildings_named": "building",
+    "industrial_commercial": "commercial", "water_bodies": "water", "other_amenities": "amenity",
+}
+
+BUILDER_CITY_CENTERS = [
+    ("Pune", 18.52, 73.86), ("Mumbai", 19.08, 72.88), ("Nagpur", 21.15, 79.09),
+    ("Nashik", 20.00, 73.79), ("Aurangabad", 19.88, 75.34), ("Thane", 19.22, 72.98),
+    ("Kolhapur", 16.70, 74.24), ("Solapur", 17.68, 75.92), ("Amravati", 20.93, 77.78),
+    ("Nanded", 19.16, 77.30), ("Sangli", 16.85, 74.56), ("Latur", 18.40, 76.57),
+    ("Jalgaon", 21.01, 75.57), ("Akola", 20.71, 77.00), ("Chandrapur", 19.97, 79.30),
+    ("Parbhani", 19.27, 76.78), ("Satara", 17.68, 74.00), ("Ratnagiri", 16.99, 73.30),
+    ("Ahmednagar", 19.09, 74.74), ("Dhule", 20.90, 74.78), ("Navi Mumbai", 19.03, 73.03),
+    ("Pimpri-Chinchwad", 18.63, 73.80), ("Vasai-Virar", 19.42, 72.84),
+    ("Panvel", 18.99, 73.12), ("Jalna", 19.84, 75.88), ("Beed", 18.99, 75.76),
+    ("Gondia", 21.46, 80.19), ("Yavatmal", 20.39, 78.12), ("Wardha", 20.74, 78.60),
+    ("Baramati", 18.15, 74.58), ("Shirdi", 19.77, 74.48), ("Lonavala", 18.75, 73.41),
+]
+
+
+def _infer_city(lat, lng):
+    min_d, nearest = float('inf'), "Maharashtra"
+    for name, clat, clng in BUILDER_CITY_CENTERS:
+        d = math.sqrt((lat - clat)**2 + (lng - clng)**2)
+        if d < min_d:
+            min_d, nearest = d, name
+    return nearest if min_d < 0.5 else "Maharashtra"
+
+
+def _make_grid(bbox_s, bbox_w, bbox_n, bbox_e, cell_lat=2.0, cell_lng=2.8):
+    cells = []
+    lat = bbox_s
+    while lat < bbox_n:
+        lng = bbox_w
+        while lng < bbox_e:
+            cells.append((lat, lng, min(lat + cell_lat, bbox_n), min(lng + cell_lng, bbox_e)))
+            lng += cell_lng
+        lat += cell_lat
+    return cells
+
+
+# Categories that are very large need grid splitting; others can use full bbox
+_HEAVY_CATEGORIES = {"roads_highways", "buildings_named", "colonies_residential", "shops_malls", "villages_towns", "other_amenities", "schools_colleges", "cafes_restaurants", "temples_worship"}
+
+
+async def _fetch_category(cat_name: str, query_tpl: str, bbox_str: str, cell_label: str = "") -> list:
+    """Fetch one category for one bbox, with retries."""
+    query = query_tpl.replace("{bbox}", bbox_str)
+    pois = []
+    retries = 0
+    while retries < 3:
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                resp = await client.post(OVERPASS_URL, data={"data": query})
+                if resp.status_code == 200:
+                    elements = resp.json().get("elements", [])
+                    for el in elements:
+                        lat = el.get("lat") or el.get("center", {}).get("lat")
+                        lng = el.get("lon") or el.get("center", {}).get("lon")
+                        if not lat or not lng:
+                            continue
+                        tags = el.get("tags", {})
+                        name = tags.get("name:en") or tags.get("name") or tags.get("operator") or tags.get("brand") or tags.get("ref") or f"{cat_name}_{el.get('id','x')}"
+                        city = tags.get("addr:city") or tags.get("is_in:city") or _infer_city(lat, lng)
+                        poi = {"name": name.strip(), "lat": round(lat, 6), "lng": round(lng, 6), "type": BUILDER_TAG_MAP.get(cat_name, cat_name), "city": str(city).strip(), "osm_id": el.get("id")}
+                        if tags.get("addr:street"): poi["address"] = tags["addr:street"]
+                        if tags.get("phone"): poi["phone"] = tags["phone"]
+                        if tags.get("website"): poi["website"] = tags["website"]
+                        pois.append(poi)
+                    logger.info(f"[BUILDER] {cat_name}{cell_label}: {len(elements)} elements → {len(pois)} named POIs")
+                    return pois
+                elif resp.status_code in (429, 504, 503):
+                    retries += 1
+                    logger.warning(f"[BUILDER] {cat_name}{cell_label}: HTTP {resp.status_code}, retry {retries}")
+                    await asyncio.sleep(30 * retries)
+                else:
+                    logger.warning(f"[BUILDER] {cat_name}{cell_label}: HTTP {resp.status_code}")
+                    return pois
+        except Exception as ex:
+            retries += 1
+            logger.warning(f"[BUILDER] {cat_name}{cell_label}: {ex}, retry {retries}")
+            await asyncio.sleep(20 * retries)
+    return pois
+
+
+async def _run_dataset_builder():
+    """Background task: fetch all categories from Overpass and upload to HF.
+    Light categories → single query for full Maharashtra bbox.
+    Heavy categories → split into grid cells (2°×2.8°).
+    """
+    global BUILDER_STATUS, EXTENDED_POIS, SEARCHABLE_POIS
+    BUILDER_STATUS = {"running": True, "progress": "starting", "category": "", "done": 0, "total": len(BUILDER_CATEGORIES), "results": {}}
+    full_bbox = (MH_BBOX["south"], MH_BBOX["west"], MH_BBOX["north"], MH_BBOX["east"])
+    full_bbox_str = f"{full_bbox[0]},{full_bbox[1]},{full_bbox[2]},{full_bbox[3]}"
+    grid_cells = _make_grid(*full_bbox)
+    all_data = []
+    cat_counts = {}
+
+    for cat_idx, (cat_name, query_tpl) in enumerate(BUILDER_CATEGORIES.items()):
+        BUILDER_STATUS["category"] = cat_name
+        BUILDER_STATUS["done"] = cat_idx
+        BUILDER_STATUS["progress"] = f"Fetching {cat_name} ({cat_idx+1}/{len(BUILDER_CATEGORIES)})"
+
+        cat_pois = []
+        if cat_name in _HEAVY_CATEGORIES:
+            # Heavy category → split into grid cells
+            logger.info(f"[BUILDER] {BUILDER_STATUS['progress']} across {len(grid_cells)} cells (heavy)")
+            for ci, (s, w, n, e) in enumerate(grid_cells):
+                cell_bbox = f"{s},{w},{n},{e}"
+                pois = await _fetch_category(cat_name, query_tpl, cell_bbox, f" cell {ci+1}/{len(grid_cells)}")
+                cat_pois.extend(pois)
+                await asyncio.sleep(3)  # rate limit between cells
+        else:
+            # Light category → single query for full Maharashtra
+            logger.info(f"[BUILDER] {BUILDER_STATUS['progress']} (full bbox)")
+            cat_pois = await _fetch_category(cat_name, query_tpl, full_bbox_str)
+            await asyncio.sleep(5)  # rate limit between categories
+
+        cat_counts[cat_name] = len(cat_pois)
+        all_data.extend(cat_pois)
+        logger.info(f"[BUILDER] {cat_name}: {len(cat_pois):,} POIs")
+
+    # Deduplicate
+    BUILDER_STATUS["progress"] = "Deduplicating..."
+    seen = set()
+    final = []
+    for p in all_data:
+        key = f"{p['name'].lower().strip()}|{round(p['lat'],4)}|{round(p['lng'],4)}"
+        if key not in seen:
+            seen.add(key)
+            final.append(p)
+
+    logger.info(f"[BUILDER] Total: {len(all_data):,} raw → {len(final):,} unique")
+
+    # Upload to HuggingFace
+    BUILDER_STATUS["progress"] = "Uploading to HuggingFace..."
+    if HF_TOKEN:
+        try:
+            from huggingface_hub import HfApi
+            api = HfApi(token=HF_TOKEN)
+            data_bytes = json.dumps(final, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            api.upload_file(path_or_fileobj=data_bytes, path_in_repo="maharashtra_pois.json", repo_id=HF_DATASET_REPO, repo_type="dataset")
+            stats = {"total_unique_places": len(final), "total_raw": len(all_data), "categories": cat_counts, "generated_at": datetime.utcnow().isoformat() + "Z"}
+            stats_bytes = json.dumps(stats, indent=2).encode("utf-8")
+            api.upload_file(path_or_fileobj=stats_bytes, path_in_repo="dataset_stats.json", repo_id=HF_DATASET_REPO, repo_type="dataset")
+            logger.info(f"[BUILDER] Uploaded {len(final):,} POIs to {HF_DATASET_REPO}")
+        except Exception as e:
+            logger.error(f"[BUILDER] Upload failed: {e}")
+    else:
+        logger.warning("[BUILDER] No HF_TOKEN — skipping upload")
+
+    # Reload into memory
+    EXTENDED_POIS = final
+    seen2 = set()
+    combined = []
+    for p in ALL_POIS:
+        key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
+        if key not in seen2:
+            seen2.add(key)
+            combined.append(p)
+    for p in EXTENDED_POIS:
+        key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
+        if key not in seen2:
+            seen2.add(key)
+            combined.append(p)
+    SEARCHABLE_POIS = combined
+    logger.info(f"[BUILDER] Reloaded: {len(SEARCHABLE_POIS):,} total searchable POIs")
+
+    BUILDER_STATUS.update({"running": False, "progress": "complete", "done": len(BUILDER_CATEGORIES), "results": {"total_unique": len(final), "total_raw": len(all_data), "categories": cat_counts}})
+
+
+@app.post("/api/data/build-dataset")
+async def build_dataset():
+    """Trigger dataset build on HF server. Returns immediately, runs in background."""
+    if BUILDER_STATUS.get("running"):
+        return {"status": "already_running", "progress": BUILDER_STATUS["progress"], "category": BUILDER_STATUS["category"], "done": BUILDER_STATUS["done"], "total": BUILDER_STATUS["total"]}
+    asyncio.create_task(_run_dataset_builder())
+    return {"status": "started", "message": "Dataset builder started in background. Check /api/data/build-status for progress.", "categories": len(BUILDER_CATEGORIES)}
+
+
+@app.get("/api/data/build-status")
+async def build_status():
+    """Check dataset build progress."""
+    return BUILDER_STATUS
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
 
