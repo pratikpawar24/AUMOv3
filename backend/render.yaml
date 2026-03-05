@@ -6,7 +6,7 @@ services:
     repo: https://github.com/pratikpawar24/AUMOv3
     branch: main
     rootDir: backend
-    buildCommand: npm ci && npm run build
+    buildCommand: npm install && npm run build
     startCommand: npm run start
     healthCheckPath: /api/health
     envVars:

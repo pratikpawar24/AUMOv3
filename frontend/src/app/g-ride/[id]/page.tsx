@@ -41,11 +41,13 @@ export default function RideDetailPage() {
 
   const routeResult = ride.polyline ? {
     polyline: ride.polyline,
-    distance_km: ride.distanceKm,
-    duration_min: ride.durationMin,
-    co2_grams: ride.co2Saved * 1000 || 0,
-    strategy: "balanced" as const,
-    traffic_overlay: [],
+    distanceKm: ride.distanceKm,
+    durationMin: ride.durationMin,
+    co2Grams: ride.co2Saved * 1000 || 0,
+    cost: 0,
+    avgCongestion: 0,
+    algorithm: "balanced",
+    trafficOverlay: [] as { lat: number; lng: number; congestion: number; speed: number }[],
   } : undefined;
 
   return (
@@ -130,8 +132,8 @@ export default function RideDetailPage() {
           {/* Map */}
           <div className="lg:col-span-3 h-[500px] rounded-2xl overflow-hidden border border-gray-200 dark:border-gray-800">
             <MapView
-              origin={[ride.origin.lat, ride.origin.lng]}
-              destination={[ride.destination.lat, ride.destination.lng]}
+              origin={{ lat: ride.origin.lat, lng: ride.origin.lng }}
+              destination={{ lat: ride.destination.lat, lng: ride.destination.lng }}
               route={routeResult}
             />
           </div>

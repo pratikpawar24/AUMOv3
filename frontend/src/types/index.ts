@@ -1,4 +1,5 @@
 export interface User {
+  _id: string;
   id: string;
   name: string;
   email: string;
@@ -33,6 +34,7 @@ export interface Ride {
   durationMin: number;
   co2Saved: number;
   fare: number;
+  farePerSeat: number;
   preferences: { smoking: boolean; music: boolean; petFriendly: boolean; quietRide: boolean };
   chatRoomId?: string;
 }

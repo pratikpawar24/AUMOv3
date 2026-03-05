@@ -220,6 +220,11 @@ class POISearchRequest(BaseModel):
 # API Endpoints
 # ═══════════════════════════════════════════════════════════════
 
+@app.get("/")
+async def root():
+    return {"service": "AUMOv3 AI", "status": "running", "version": "3.0.0"}
+
+
 @app.get("/api/health")
 async def health():
     return {

@@ -8,7 +8,7 @@ interface AuthState {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string, phone?: string) => Promise<void>;
   logout: () => void;
   loadUser: () => Promise<void>;
 }
@@ -30,10 +30,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  register: async (name, email, password) => {
+  register: async (name, email, password, phone?) => {
     set({ loading: true });
     try {
-      const res = await api.post("/api/users/register", { name, email, password });
+      const res = await api.post("/api/users/register", { name, email, password, phone });
       localStorage.setItem("aumo_token", res.data.token);
       set({ user: res.data.user, token: res.data.token, loading: false });
     } catch (err) {
