@@ -75,7 +75,7 @@ class ContractionHierarchies:
         self.contracted: set = set()
         self._preprocessed = False
 
-    def preprocess(self, max_nodes: int = 5000):
+    def preprocess(self, max_nodes: int = 50000):
         """Run CH preprocessing."""
         print("[CH] Starting Contraction Hierarchies preprocessing...")
         start = time_module.time()
@@ -83,9 +83,9 @@ class ContractionHierarchies:
         G = self.augmented_graph
         nodes = list(G.nodes())
         
-        # Limit preprocessing for large graphs
+        # Limit preprocessing for very large graphs
         if len(nodes) > max_nodes:
-            print(f"[CH] Graph too large ({len(nodes)} nodes), using subset")
+            print(f"[CH] Graph too large ({len(nodes)} nodes), using top {max_nodes} by degree")
             nodes = sorted(nodes, key=lambda n: G.degree(n))[:max_nodes]
         
         # Step 1: Calculate initial node importance

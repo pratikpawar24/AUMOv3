@@ -46,7 +46,7 @@ from config import (
     CORS_ORIGINS, API_PORT,
     ML_SERVICE_URL, DATA_SERVICE_URL,
 )
-from algorithms.graph_builder import build_graph, build_synthetic_graph, find_nearest_node
+from algorithms.graph_builder import build_graph, build_synthetic_graph, find_nearest_node, build_spatial_index
 from algorithms.astar import (
     astar_route, dynamic_reroute, get_traffic_overlay,
     ContractionHierarchies, yen_k_shortest_paths,
@@ -106,6 +106,7 @@ async def startup():
 
     # Start with synthetic graph immediately so app is ready fast
     state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
+    build_spatial_index(state["graph"])
     state["ready"] = True
     logger.info(f"[Startup] Synthetic graph ready: {len(state['graph'].nodes())} nodes")
     logger.info(f"[Startup] Gateway ready on port {API_PORT}")
@@ -124,6 +125,7 @@ async def _upgrade_graph():
         logger.info("[Graph] Fetching real OSM graph in background...")
         G = await build_graph()
         if G and len(G.nodes()) > 0:
+            build_spatial_index(G)
             state["graph"] = G
             logger.info(f"[Graph] Upgraded to OSM graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
 

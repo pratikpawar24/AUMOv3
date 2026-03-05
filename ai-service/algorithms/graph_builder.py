@@ -9,6 +9,7 @@ Graph construction: G = (V, E)
 
 import math
 import httpx
+import numpy as np
 import networkx as nx
 from typing import Dict, Any, Optional, Tuple, List
 from utils.haversine import haversine
@@ -200,7 +201,13 @@ def build_synthetic_graph(
 
 
 def find_nearest_node(G: nx.DiGraph, lat: float, lng: float) -> Optional[int]:
-    """Find the nearest graph node to given coordinates."""
+    """Find the nearest graph node using KD-tree spatial index (O(log n))."""
+    kdtree = getattr(G, '_kdtree', None)
+    node_ids = getattr(G, '_kdtree_ids', None)
+    if kdtree is not None and node_ids is not None:
+        dist, idx = kdtree.query([lat, lng])
+        return node_ids[idx]
+    # Fallback: linear scan (slow for large graphs)
     min_dist = float("inf")
     nearest = None
     for node_id, data in G.nodes(data=True):
@@ -209,3 +216,19 @@ def find_nearest_node(G: nx.DiGraph, lat: float, lng: float) -> Optional[int]:
             min_dist = dist
             nearest = node_id
     return nearest
+
+
+def build_spatial_index(G: nx.DiGraph):
+    """Build a KD-tree spatial index on the graph for O(log n) nearest-node lookups."""
+    from scipy.spatial import cKDTree
+    node_ids = []
+    coords = []
+    for nid, data in G.nodes(data=True):
+        node_ids.append(nid)
+        coords.append([data["lat"], data["lng"]])
+    if coords:
+        arr = np.array(coords)
+        G._kdtree = cKDTree(arr)
+        G._kdtree_ids = node_ids
+        print(f"[GraphBuilder] KD-tree spatial index built for {len(node_ids)} nodes")
+    return G

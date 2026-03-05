@@ -26,6 +26,7 @@ logger = logging.getLogger("aumov3-data")
 
 POI_TYPES = {
     "st_bus_stand": {"icon": "bus", "color": "#E53E3E", "label": "ST Bus Stand"},
+    "bus_stop": {"icon": "bus", "color": "#FC8181", "label": "City Bus Stop"},
     "railway_station": {"icon": "train", "color": "#3182CE", "label": "Railway Station"},
     "junction": {"icon": "crosshairs", "color": "#DD6B20", "label": "Junction / Chowk"},
     "shop": {"icon": "shopping-cart", "color": "#38A169", "label": "Shopping Area"},
@@ -38,6 +39,14 @@ POI_TYPES = {
     "colony": {"icon": "home", "color": "#9F7AEA", "label": "Colony / Residential"},
     "road": {"icon": "road", "color": "#718096", "label": "Road / Highway"},
     "chowk": {"icon": "crosshairs", "color": "#ED8936", "label": "Chowk / Square"},
+    "police_station": {"icon": "shield", "color": "#2D3748", "label": "Police Station"},
+    "airport": {"icon": "plane", "color": "#2C5282", "label": "Airport"},
+    "cafe": {"icon": "coffee", "color": "#B7791F", "label": "Cafe / Restaurant"},
+    "town": {"icon": "map-pin", "color": "#4C51BF", "label": "Town / Village"},
+    "place": {"icon": "map-pin", "color": "#667EEA", "label": "Place / Area"},
+    "worship": {"icon": "landmark", "color": "#F6AD55", "label": "Temple / Worship"},
+    "bank": {"icon": "landmark", "color": "#48BB78", "label": "Bank / ATM"},
+    "post_office": {"icon": "mail", "color": "#FC8181", "label": "Post Office"},
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -315,6 +324,12 @@ OTHER_POIS = [
 
 ALL_POIS: List[Dict[str, Any]] = PUNE_POIS + MUMBAI_POIS + NAGPUR_POIS + NASHIK_POIS + OTHER_POIS
 
+# Extended POI dataset loaded from HuggingFace (filled on startup)
+EXTENDED_POIS: List[Dict[str, Any]] = []
+
+# Combined searchable POIs (hardcoded + extended)
+SEARCHABLE_POIS: List[Dict[str, Any]] = list(ALL_POIS)
+
 # ═══════════════════════════════════════════════════════════════
 # Haversine Helper
 # ═══════════════════════════════════════════════════════════════
@@ -391,6 +406,42 @@ async def load_cache_from_hf():
         logger.info(f"Loaded {len(_places_cache)} entries from HF dataset cache")
     except Exception as e:
         logger.info(f"No HF cache found (first run?): {e}")
+
+
+async def load_extended_pois_from_hf():
+    """Download the massive POI dataset from HuggingFace Dataset."""
+    global EXTENDED_POIS, SEARCHABLE_POIS
+    if not HF_TOKEN:
+        logger.info("No HF_TOKEN — extended POIs not loaded")
+        return
+    try:
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download(
+            repo_id=HF_DATASET_REPO,
+            filename="maharashtra_pois.json",
+            repo_type="dataset",
+            token=HF_TOKEN,
+        )
+        with open(path, "r", encoding="utf-8") as f:
+            EXTENDED_POIS = json.load(f)
+
+        # Merge: hardcoded + extended, deduplicate by name+coords
+        seen = set()
+        combined = []
+        for p in ALL_POIS:
+            key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
+            if key not in seen:
+                seen.add(key)
+                combined.append(p)
+        for p in EXTENDED_POIS:
+            key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
+            if key not in seen:
+                seen.add(key)
+                combined.append(p)
+        SEARCHABLE_POIS = combined
+        logger.info(f"Loaded {len(EXTENDED_POIS)} extended POIs from HF → total searchable: {len(SEARCHABLE_POIS)}")
+    except Exception as e:
+        logger.info(f"No extended POI dataset found on HF: {e}")
 
 
 async def fetch_overpass_places(
@@ -566,7 +617,9 @@ async def startup():
     logger.info("AUMOv3.2 Data Service starting...")
     _load_local_cache()
     await load_cache_from_hf()
-    logger.info(f"Loaded {len(ALL_POIS)} hardcoded POIs + {len(_places_cache)} cached entries")
+    await load_extended_pois_from_hf()
+    logger.info(f"Loaded {len(ALL_POIS)} hardcoded + {len(EXTENDED_POIS)} extended POIs = {len(SEARCHABLE_POIS)} total")
+    logger.info(f"Cache entries: {len(_places_cache)}")
     logger.info("Data Service ready!")
 
 
@@ -577,7 +630,7 @@ async def root():
     return {
         "service": "AUMOv3.2 Data & Places",
         "version": "3.2.0",
-        "poi_count": len(ALL_POIS),
+        "poi_count": len(SEARCHABLE_POIS),
         "cache_entries": len(_places_cache),
         "status": "healthy",
     }
@@ -587,7 +640,7 @@ async def health():
     return {
         "status": "healthy",
         "service": "aumov3-data",
-        "poi_count": len(ALL_POIS),
+        "poi_count": len(SEARCHABLE_POIS),
         "cache_entries": len(_places_cache),
         "timestamp": datetime.utcnow().isoformat(),
     }
@@ -601,7 +654,7 @@ async def places_search(req: PlaceSearchRequest):
     results = []
 
     # 1. Search hardcoded POIs
-    filtered = ALL_POIS
+    filtered = SEARCHABLE_POIS
     if req.query:
         q = req.query.lower()
         filtered = [p for p in filtered if q in p["name"].lower() or q in p.get("city", "").lower()]
@@ -707,8 +760,8 @@ async def nearby_stops(
 
     # Also add hardcoded stops
     hardcoded_stops = [
-        p for p in ALL_POIS
-        if p["type"] in ("st_bus_stand", "railway_station", "metro")
+        p for p in SEARCHABLE_POIS
+        if p["type"] in ("st_bus_stand", "bus_stop", "railway_station", "metro")
     ]
     for p in hardcoded_stops:
         dist = haversine_km(lat, lng, p["lat"], p["lng"])
@@ -740,8 +793,8 @@ async def search_pois(
     radius_km: float = 50,
     limit: int = 50,
 ):
-    """Search POIs from hardcoded database."""
-    results = ALL_POIS
+    """Search POIs from database."""
+    results = SEARCHABLE_POIS
 
     if query:
         q = query.lower()
@@ -764,7 +817,7 @@ async def search_pois(
 async def pois_for_map(req: POIMapRequest):
     """Get POIs within map bounds."""
     results = [
-        p for p in ALL_POIS
+        p for p in SEARCHABLE_POIS
         if req.south <= p["lat"] <= req.north and req.west <= p["lng"] <= req.east
     ]
     if req.types:
@@ -781,7 +834,7 @@ async def poi_types():
 @app.get("/api/poi/cities")
 async def poi_cities():
     """Return list of all cities with POIs."""
-    cities = sorted(set(p.get("city", "Unknown") for p in ALL_POIS))
+    cities = sorted(set(p.get("city", "Unknown") for p in SEARCHABLE_POIS))
     return {"cities": cities}
 
 
@@ -824,17 +877,19 @@ async def refresh_data():
 async def data_stats():
     """Return data service statistics."""
     city_counts = {}
-    for p in ALL_POIS:
+    for p in SEARCHABLE_POIS:
         c = p.get("city", "Unknown")
         city_counts[c] = city_counts.get(c, 0) + 1
 
     type_counts = {}
-    for p in ALL_POIS:
+    for p in SEARCHABLE_POIS:
         t = p.get("type", "unknown")
         type_counts[t] = type_counts.get(t, 0) + 1
 
     return {
-        "total_pois": len(ALL_POIS),
+        "total_pois": len(SEARCHABLE_POIS),
+        "hardcoded_pois": len(ALL_POIS),
+        "extended_pois": len(EXTENDED_POIS),
         "cache_entries": len(_places_cache),
         "cities": city_counts,
         "types": type_counts,
