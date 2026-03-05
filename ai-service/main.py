@@ -96,18 +96,18 @@ async def startup():
     # Build road graph
     try:
         print("[Startup] Building road graph...")
-        G = build_graph()
+        G = await build_graph()
         if G is None or len(G.nodes()) == 0:
             print("[Startup] OSM fetch failed, using synthetic graph")
-            G = build_synthetic_graph()
+            G = build_synthetic_graph(graph_config.osm_bbox)
         state["graph"] = G
         print(f"[Startup] Graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
     except Exception as e:
         print(f"[Startup] Graph error: {e}, using synthetic")
-        state["graph"] = build_synthetic_graph()
+        state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
 
     # Contraction Hierarchies
-    if routing_config.use_ch and state["graph"]:
+    if routing_config.ch_enabled and state["graph"]:
         try:
             print("[Startup] Running CH preprocessing...")
             ch = ContractionHierarchies(state["graph"])
