@@ -3,7 +3,7 @@ import { env } from "../config/env";
 
 const aiClient = axios.create({
   baseURL: env.AI_SERVICE_URL,
-  timeout: 60000,
+  timeout: 120000,
 });
 
 export async function getRoute(params: {

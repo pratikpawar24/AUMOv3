@@ -49,7 +49,25 @@ export async function getProfile(req: AuthRequest, res: Response) {
 
 export async function updateProfile(req: AuthRequest, res: Response) {
   try {
-    const user = await User.findByIdAndUpdate(req.userId, req.body, { new: true });
+    const allowedFields = ["name", "phone", "preferences"];
+    const update: any = {};
+    for (const key of allowedFields) {
+      if (req.body[key] !== undefined) update[key] = req.body[key];
+    }
+    const user = await User.findByIdAndUpdate(req.userId, update, { new: true });
+    res.json({ user });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function uploadAvatar(req: AuthRequest, res: Response) {
+  try {
+    const { avatar } = req.body; // base64 data URI
+    if (!avatar || typeof avatar !== "string") return res.status(400).json({ error: "Avatar data required" });
+    // Limit size to ~2MB base64
+    if (avatar.length > 2_800_000) return res.status(400).json({ error: "Image too large (max 2MB)" });
+    const user = await User.findByIdAndUpdate(req.userId, { avatar }, { new: true });
     res.json({ user });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

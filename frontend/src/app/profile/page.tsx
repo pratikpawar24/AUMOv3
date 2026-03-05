@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
-import { User, Leaf, Award, Settings, LogOut, Car, MapPin, TrendingUp } from "lucide-react";
+import { User, Leaf, Award, Settings, LogOut, Car, MapPin, TrendingUp, Camera } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import api from "@/lib/api";
 import { formatCO2 } from "@/lib/utils";
@@ -17,6 +17,31 @@ export default function ProfilePage() {
   const { user, logout, loadUser } = useAuthStore();
   const [stats, setStats] = useState({ totalRides: 0, totalCO2: 0, totalDistance: 0 });
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert("Image too large (max 2MB)"); return; }
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        try {
+          await api.post("/api/users/avatar", { avatar: reader.result });
+          await loadUser();
+        } catch (err: any) {
+          alert(err.response?.data?.error || "Upload failed");
+        } finally {
+          setUploading(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      setUploading(false);
+    }
+  };
 
   useEffect(() => {
     loadUser();
@@ -53,8 +78,22 @@ export default function ProfilePage() {
         {/* Profile header */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-primary-400 to-primary-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-              {user.name.charAt(0).toUpperCase()}
+            <div className="relative group cursor-pointer" onClick={() => fileRef.current?.click()}>
+              {user.avatar ? (
+                <img src={user.avatar} alt={user.name} className="w-16 h-16 rounded-full object-cover border-2 border-primary-400" />
+              ) : (
+                <div className="w-16 h-16 bg-gradient-to-br from-primary-400 to-primary-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
+                  {user.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                {uploading ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Camera size={18} className="text-white" />
+                )}
+              </div>
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
             </div>
             <div className="flex-1">
               <h1 className="text-xl font-bold">{user.name}</h1>

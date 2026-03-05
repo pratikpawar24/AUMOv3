@@ -80,6 +80,14 @@ export default function GRidePage() {
                   <span className="flex items-center gap-1"><Users size={12} /> {ride.seatsAvailable} seats</span>
                   <span className="flex items-center gap-1 text-green-600"><Leaf size={12} /> {formatCO2(ride.co2Saved)} saved</span>
                 </div>
+
+                {/* Vehicle */}
+                {(ride.vehicleName || ride.vehicleRegNo) && (
+                  <div className="flex items-center gap-3 text-xs text-gray-500 border-t border-gray-100 dark:border-gray-800 pt-2 mt-2">
+                    {ride.vehicleName && <span className="flex items-center gap-1"><Car size={12} /> {ride.vehicleName}</span>}
+                    {ride.vehicleRegNo && <span className="bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded font-mono">{ride.vehicleRegNo}</span>}
+                  </div>
+                )}
               </Link>
             ))}
           </div>

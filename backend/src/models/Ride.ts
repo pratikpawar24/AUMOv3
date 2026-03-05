@@ -15,6 +15,8 @@ export interface IRide extends Document {
   durationMin: number;
   co2Saved: number;
   fare: number;
+  vehicleName: string;
+  vehicleRegNo: string;
   preferences: {
     smoking: boolean;
     music: boolean;
@@ -54,6 +56,8 @@ const rideSchema = new Schema<IRide>(
     durationMin: { type: Number, default: 0 },
     co2Saved: { type: Number, default: 0 },
     fare: { type: Number, default: 0 },
+    vehicleName: { type: String, default: "" },
+    vehicleRegNo: { type: String, default: "" },
     preferences: {
       smoking: { type: Boolean, default: false },
       music: { type: Boolean, default: true },

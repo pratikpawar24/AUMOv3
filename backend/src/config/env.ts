@@ -8,7 +8,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().default("aumo-v3-secret-key-2025"),
   AI_SERVICE_URL: z.string().default("http://localhost:8000"),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
-  ADMIN_EMAIL: z.string().default("admin@aumo.in"),
+  ADMIN_EMAIL: z.string().default("admin@aumo3.com"),
   ADMIN_PASSWORD: z.string().default("admin123"),
 });
 

@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
 import AuthGuard from "@/components/auth/AuthGuard";
 import Link from "next/link";
-import { ArrowLeft, MapPin, Clock, Users, Leaf, IndianRupee, UserPlus, MessageCircle } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Users, Leaf, IndianRupee, UserPlus, MessageCircle, Car, Route } from "lucide-react";
 import api from "@/lib/api";
 import { formatCO2, formatDuration, formatDistance } from "@/lib/utils";
 import dynamic from "next/dynamic";
@@ -85,8 +85,29 @@ export default function RideDetailPage() {
                 <div className="flex items-center gap-2 text-gray-600"><Clock size={14} /> {new Date(ride.departureTime).toLocaleString()}</div>
                 <div className="flex items-center gap-2 text-gray-600"><Users size={14} /> {ride.seatsAvailable} seats left</div>
                 <div className="flex items-center gap-2 text-green-600"><Leaf size={14} /> {formatCO2(ride.co2Saved)} saved</div>
-                <div className="flex items-center gap-2 text-gray-600"><IndianRupee size={14} /> ₹{ride.farePerSeat}/seat</div>
+                <div className="flex items-center gap-2 text-gray-600"><IndianRupee size={14} /> ₹{ride.fare}/seat</div>
               </div>
+
+              {/* Vehicle Info */}
+              {(ride.vehicleName || ride.vehicleRegNo) && (
+                <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl space-y-1">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Vehicle</h3>
+                  {ride.vehicleName && (
+                    <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><Car size={14} /> {ride.vehicleName}</div>
+                  )}
+                  {ride.vehicleRegNo && (
+                    <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><Route size={14} /> {ride.vehicleRegNo}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Distance & Time */}
+              {(ride.distanceKm > 0 || ride.durationMin > 0) && (
+                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex gap-4 text-sm">
+                  {ride.distanceKm > 0 && <span className="text-blue-700 dark:text-blue-300 font-medium">📍 {formatDistance(ride.distanceKm)}</span>}
+                  {ride.durationMin > 0 && <span className="text-blue-700 dark:text-blue-300 font-medium">⏱ {formatDuration(ride.durationMin)}</span>}
+                </div>
+              )}
 
               {/* Preferences */}
               {ride.preferences && (
@@ -101,9 +122,9 @@ export default function RideDetailPage() {
 
             {/* Actions */}
             <div className="flex gap-3">
-              <button onClick={handleJoin} disabled={joining || ride.seatsAvailable <= 0 || ride.status !== "active"}
+              <button onClick={handleJoin} disabled={joining || ride.seatsAvailable <= 0 || ride.status === "completed" || ride.status === "cancelled"}
                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 disabled:opacity-50 transition">
-                <UserPlus size={16} /> {joining ? "Joining..." : ride.seatsAvailable <= 0 ? "Full" : "Join Ride"}
+                <UserPlus size={16} /> {joining ? "Joining..." : ride.seatsAvailable <= 0 ? "Full" : ride.status === "completed" ? "Completed" : ride.status === "cancelled" ? "Cancelled" : "Join Ride"}
               </button>
               {ride.chatRoomId && (
                 <Link href={`/chat/${ride.chatRoomId}`}

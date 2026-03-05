@@ -35,6 +35,8 @@ export interface Ride {
   co2Saved: number;
   fare: number;
   farePerSeat: number;
+  vehicleName: string;
+  vehicleRegNo: string;
   preferences: { smoking: boolean; music: boolean; petFriendly: boolean; quietRide: boolean };
   chatRoomId?: string;
 }
