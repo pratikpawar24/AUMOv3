@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: aumo3-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: aumo3
+
+  ai-service:
+    build: ./ai-service
+    container_name: aumo3-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - OSRM_URL=http://router.project-osrm.org
+      - MODEL_PATH=/app/models/traffic_model.pt
+      - LOG_LEVEL=info
+    volumes:
+      - ai_models:/app/models
+
+  backend:
+    build: ./backend
+    container_name: aumo3-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongodb
+      - ai-service
+    environment:
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongodb:27017/aumo3
+      - JWT_SECRET=aumo3-super-secret-key-change-in-production
+      - AI_SERVICE_URL=http://ai-service:8000
+      - CORS_ORIGIN=http://localhost:3000
+      - ADMIN_EMAIL=admin@aumo3.com
+      - ADMIN_PASSWORD=admin123
+
+  frontend:
+    build: ./frontend
+    container_name: aumo3-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:5000
+
+volumes:
+  mongo_data:
+  ai_models:
