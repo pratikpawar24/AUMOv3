@@ -44,9 +44,9 @@ export default function RideDetailPage() {
     distanceKm: ride.distanceKm,
     durationMin: ride.durationMin,
     co2Grams: ride.co2Saved * 1000 || 0,
-    cost: 0,
+    cost: ride.fare || 0,
     avgCongestion: 0,
-    algorithm: "balanced",
+    algorithm: "AUMORoute",
     trafficOverlay: [] as { lat: number; lng: number; congestion: number; speed: number }[],
   } : undefined;
 

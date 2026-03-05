@@ -1,0 +1,21 @@
+# Standalone Render config for AI service
+services:
+  - type: web
+    name: aumo3-ai
+    runtime: python
+    plan: free
+    repo: https://github.com/pratikpawar24/AUMOv3
+    branch: main
+    rootDir: ai-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: OSRM_URL
+        value: https://router.project-osrm.org
+      - key: MODEL_PATH
+        value: ./models/traffic_model.pt
+      - key: LOG_LEVEL
+        value: info
+      - key: PYTHONUNBUFFERED
+        value: "1"
