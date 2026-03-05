@@ -32,7 +32,7 @@ app.use("/api/traffic", trafficRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/poi", poiRoutes);
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", (_req: express.Request, res: express.Response) => {
   res.json({ status: "healthy", service: "aumo-v3-backend", version: "3.0.0" });
 });
 

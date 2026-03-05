@@ -84,6 +84,7 @@ MODEL_PATH = os.getenv("MODEL_PATH", "saved_models/traffic_lstm.pt")
 API_KEY = os.getenv("API_KEY", "aumo-ai-api-key-change-in-production")
 
 IS_HF_SPACE = os.getenv("SPACE_ID") is not None
+API_PORT = int(os.getenv("PORT", "7860" if IS_HF_SPACE else "8000"))
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5000",

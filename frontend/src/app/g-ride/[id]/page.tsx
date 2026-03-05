@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
+import AuthGuard from "@/components/auth/AuthGuard";
 import Link from "next/link";
 import { ArrowLeft, MapPin, Clock, Users, Leaf, IndianRupee, UserPlus, MessageCircle } from "lucide-react";
 import api from "@/lib/api";
@@ -36,8 +37,8 @@ export default function RideDetailPage() {
     }
   };
 
-  if (loading) return (<div className="min-h-screen bg-gray-50 dark:bg-gray-950"><Navbar /><div className="text-center py-20 text-gray-400">Loading...</div></div>);
-  if (!ride) return (<div className="min-h-screen bg-gray-50 dark:bg-gray-950"><Navbar /><div className="text-center py-20 text-gray-400">Ride not found</div></div>);
+  if (loading) return (<AuthGuard><div className="min-h-screen bg-gray-50 dark:bg-gray-950"><Navbar /><div className="text-center py-20 text-gray-400">Loading...</div></div></AuthGuard>);
+  if (!ride) return (<AuthGuard><div className="min-h-screen bg-gray-50 dark:bg-gray-950"><Navbar /><div className="text-center py-20 text-gray-400">Ride not found</div></div></AuthGuard>);
 
   const routeResult = ride.polyline ? {
     polyline: ride.polyline,
@@ -51,6 +52,7 @@ export default function RideDetailPage() {
   } : undefined;
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <Navbar />
       <div className="max-w-5xl mx-auto px-4 py-6">
@@ -140,5 +142,6 @@ export default function RideDetailPage() {
         </div>
       </div>
     </div>
+    </AuthGuard>
   );
 }

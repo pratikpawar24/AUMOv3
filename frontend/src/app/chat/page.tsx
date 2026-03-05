@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Navbar from "@/components/layout/Navbar";
+import AuthGuard from "@/components/auth/AuthGuard";
 import Link from "next/link";
 import { MessageCircle, Users } from "lucide-react";
 import api from "@/lib/api";
@@ -37,6 +38,7 @@ export default function ChatListPage() {
   }, []);
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <Navbar />
       <div className="max-w-2xl mx-auto px-4 py-6">
@@ -74,5 +76,6 @@ export default function ChatListPage() {
         )}
       </div>
     </div>
+    </AuthGuard>
   );
 }

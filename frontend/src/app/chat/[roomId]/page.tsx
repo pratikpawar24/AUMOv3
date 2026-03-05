@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
+import AuthGuard from "@/components/auth/AuthGuard";
 import Link from "next/link";
 import { ArrowLeft, Send } from "lucide-react";
 import { io, Socket } from "socket.io-client";
@@ -74,6 +75,7 @@ export default function ChatRoomPage() {
   };
 
   return (
+    <AuthGuard>
     <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-950">
       <Navbar />
 
@@ -129,5 +131,6 @@ export default function ChatRoomPage() {
         </div>
       </div>
     </div>
+    </AuthGuard>
   );
 }

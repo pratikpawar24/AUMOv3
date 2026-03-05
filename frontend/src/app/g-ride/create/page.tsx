@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
+import AuthGuard from "@/components/auth/AuthGuard";
 import { Car, MapPin, Calendar, Users, IndianRupee, ArrowLeft } from "lucide-react";
 import api from "@/lib/api";
 import Link from "next/link";
@@ -42,6 +43,7 @@ export default function CreateRidePage() {
   const inputCls = "w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus:ring-2 focus:ring-primary-500 outline-none text-sm";
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <Navbar />
       <div className="max-w-2xl mx-auto px-4 py-6">
@@ -110,5 +112,6 @@ export default function CreateRidePage() {
         </div>
       </div>
     </div>
+    </AuthGuard>
   );
 }

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Navbar from "@/components/layout/Navbar";
+import AuthGuard from "@/components/auth/AuthGuard";
 import { Car, Plus, Search, MapPin, Clock, Users, Leaf } from "lucide-react";
 import api from "@/lib/api";
 import { formatCO2, formatDuration, formatDistance } from "@/lib/utils";
@@ -22,6 +23,7 @@ export default function GRidePage() {
   );
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <Navbar />
       <div className="max-w-6xl mx-auto px-4 py-6">
@@ -84,5 +86,6 @@ export default function GRidePage() {
         )}
       </div>
     </div>
+    </AuthGuard>
   );
 }
