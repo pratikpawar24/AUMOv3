@@ -104,33 +104,43 @@ async def startup():
     logger.info(f"  Data Service: {DATA_SERVICE_URL}")
     logger.info("=" * 60)
 
-    # Build road graph
-    try:
-        logger.info("[Startup] Building road graph...")
-        G = await build_graph()
-        if G is None or len(G.nodes()) == 0:
-            logger.warning("[Startup] OSM fetch failed, using synthetic graph")
-            G = build_synthetic_graph(graph_config.osm_bbox)
-        state["graph"] = G
-        logger.info(f"[Startup] Graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
-    except Exception as e:
-        logger.error(f"[Startup] Graph error: {e}, using synthetic")
-        state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
-
-    # Contraction Hierarchies
-    if routing_config.ch_enabled and state["graph"]:
-        try:
-            logger.info("[Startup] Running CH preprocessing...")
-            ch = ContractionHierarchies(state["graph"])
-            ch.preprocess()
-            state["ch"] = ch
-            logger.info("[Startup] CH preprocessing done")
-        except Exception as e:
-            logger.warning(f"[Startup] CH preprocessing error: {e}")
-
+    # Start with synthetic graph immediately so app is ready fast
+    state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
     state["ready"] = True
+    logger.info(f"[Startup] Synthetic graph ready: {len(state['graph'].nodes())} nodes")
     logger.info(f"[Startup] Gateway ready on port {API_PORT}")
     logger.info("=" * 60)
+
+    # Upgrade to real OSM graph in background (non-blocking)
+    import asyncio
+    asyncio.create_task(_upgrade_graph())
+
+
+async def _upgrade_graph():
+    """Background task: replace synthetic graph with real OSM data."""
+    import asyncio
+    await asyncio.sleep(2)  # Let app fully start first
+    try:
+        logger.info("[Graph] Fetching real OSM graph in background...")
+        G = await build_graph()
+        if G and len(G.nodes()) > 0:
+            state["graph"] = G
+            logger.info(f"[Graph] Upgraded to OSM graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
+
+            # CH preprocessing
+            if routing_config.ch_enabled:
+                try:
+                    logger.info("[Graph] Running CH preprocessing...")
+                    ch = ContractionHierarchies(G)
+                    ch.preprocess()
+                    state["ch"] = ch
+                    logger.info("[Graph] CH preprocessing done")
+                except Exception as e:
+                    logger.warning(f"[Graph] CH error: {e}")
+        else:
+            logger.warning("[Graph] OSM fetch returned empty, keeping synthetic")
+    except Exception as e:
+        logger.warning(f"[Graph] Background upgrade failed: {e}, keeping synthetic")
 
 
 # ═══════════════════════════════════════════════════════════════
