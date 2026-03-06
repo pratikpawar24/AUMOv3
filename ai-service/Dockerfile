@@ -12,3 +12,4 @@ RUN mkdir -p saved_models
 EXPOSE 7860
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+# deployed 2026-03-06T20:00:58Z
