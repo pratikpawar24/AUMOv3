@@ -1,0 +1,21 @@
+=== DEBUG DEPLOY ===
+Current: 4 files
+  + config.py
+  + algorithms/astar.py
+  + algorithms/emissions.py
+  + algorithms/graph_builder.py
+  + algorithms/maharashtra_poi.py
+  + algorithms/matching.py
+  + algorithms/__init__.py
+  + utils/haversine.py
+  + utils/live_traffic.py
+  + utils/osrm_client.py
+  + utils/__init__.py
+Committing 4 del + 15 add
+Committed!
+Reboot: 200
+Waiting 180s (full python + deps)...
+Stage: RUNNING_APP_STARTING
+https://qrmanual-aumov3.hf.space/: 200 {"ok":true,"numpy":"1.26.4"}
+https://qrmanual-aumov3.hf.space/api/health: 200 {"status":"healthy"}
+=== DONE ===

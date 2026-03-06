@@ -31,6 +31,8 @@ Endpoints:
 import os
 import asyncio
 import logging
+import traceback
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -65,23 +67,8 @@ logger = logging.getLogger("aumov3-gateway")
 
 
 # ═══════════════════════════════════════════════════════════════
-# App Initialization
+# Lifespan & App Initialization
 # ═══════════════════════════════════════════════════════════════
-
-app = FastAPI(
-    title="AUMOv3 AI Gateway",
-    description="AI-powered routing, traffic prediction, and carpool matching for Maharashtra",
-    version="3.0.0",
-    docs_url="/docs",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Global state — NO PyTorch, NO model
 state = {
@@ -91,36 +78,22 @@ state = {
 }
 
 
-# ═══════════════════════════════════════════════════════════════
-# Startup — lightweight, no PyTorch
-# ═══════════════════════════════════════════════════════════════
+async def _init_graph():
+    """Background task: build synthetic graph, then upgrade to OSM."""
+    await asyncio.sleep(1)  # Let uvicorn fully start
+    try:
+        logger.info("[Graph] Building synthetic graph...")
+        state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
+        build_spatial_index(state["graph"])
+        state["ready"] = True
+        logger.info(f"[Graph] Synthetic graph ready: {len(state['graph'].nodes())} nodes")
+    except Exception as e:
+        logger.error(f"[Graph] Synthetic graph failed: {e}")
+        state["ready"] = False
+        return
 
-@app.on_event("startup")
-async def startup():
-    """Initialize graph and CH preprocessing (no ML model loading)."""
-    logger.info("=" * 60)
-    logger.info("  AUMOv3 AI Gateway Starting...")
-    logger.info(f"  ML Service: {ML_SERVICE_URL}")
-    logger.info(f"  Data Service: {DATA_SERVICE_URL}")
-    logger.info("=" * 60)
-
-    # Start with synthetic graph immediately so app is ready fast
-    state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
-    build_spatial_index(state["graph"])
-    state["ready"] = True
-    logger.info(f"[Startup] Synthetic graph ready: {len(state['graph'].nodes())} nodes")
-    logger.info(f"[Startup] Gateway ready on port {API_PORT}")
-    logger.info("=" * 60)
-
-    # Upgrade to real OSM graph in background (non-blocking)
-    import asyncio
-    asyncio.create_task(_upgrade_graph())
-
-
-async def _upgrade_graph():
-    """Background task: replace synthetic graph with real OSM data."""
-    import asyncio
-    await asyncio.sleep(2)  # Let app fully start first
+    # Now try to upgrade to real OSM graph
+    await asyncio.sleep(3)
     try:
         logger.info("[Graph] Fetching real OSM graph in background...")
         G = await build_graph()
@@ -129,7 +102,6 @@ async def _upgrade_graph():
             state["graph"] = G
             logger.info(f"[Graph] Upgraded to OSM graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
 
-            # CH preprocessing
             if routing_config.ch_enabled:
                 try:
                     logger.info("[Graph] Running CH preprocessing...")
@@ -143,6 +115,41 @@ async def _upgrade_graph():
             logger.warning("[Graph] OSM fetch returned empty, keeping synthetic")
     except Exception as e:
         logger.warning(f"[Graph] Background upgrade failed: {e}, keeping synthetic")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Startup and shutdown lifecycle — minimal, non-blocking."""
+    logger.info("=" * 60)
+    logger.info("  AUMOv3 AI Gateway Starting...")
+    logger.info(f"  ML Service: {ML_SERVICE_URL}")
+    logger.info(f"  Data Service: {DATA_SERVICE_URL}")
+    logger.info(f"  Port: {API_PORT}")
+    logger.info("=" * 60)
+
+    # ALL graph work in background so app responds immediately
+    asyncio.create_task(_init_graph())
+
+    yield  # App runs here
+
+    logger.info("AUMOv3 Gateway shutting down...")
+
+
+app = FastAPI(
+    title="AUMOv3 AI Gateway",
+    description="AI-powered routing, traffic prediction, and carpool matching for Maharashtra",
+    version="3.0.0",
+    docs_url="/docs",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -695,3 +702,4 @@ if __name__ == "__main__":
         port=API_PORT,
         log_level="info",
     )
+# v3.0.1 — lifespan, background init

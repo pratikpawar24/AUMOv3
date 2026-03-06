@@ -1,0 +1,3 @@
+stage=RUNNING
+hardware={'current': 'cpu-basic', 'requested': 'cpu-basic'}
+full={'stage': 'RUNNING', 'hardware': {'current': 'cpu-basic', 'requested': 'cpu-basic'}, 'storage': {'current': None, 'requested': None}, 'gcTimeout': 172800, 'replicas': {'current': 1, 'requested': 1}, 'devMode': False, 'domains': [{'domain': 'qrmanual-aumov3.hf.space', 'stage': 'READY'}], 'sha': 'dcfeb7df4386f60e42360545277ce69af42df65e', 'pySpacesVersion': '0.47.0'}

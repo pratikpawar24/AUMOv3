@@ -1,0 +1,56 @@
+[21:23:13] Step 1: Listing existing files...
+[21:23:14]   Found 15 existing files: ['Dockerfile', 'README.md', 'algorithms/__init__.py', 'algorithms/astar.py', 'algorithms/emissions.py', 'algorithms/graph_builder.py', 'algorithms/maharashtra_poi.py', 'algorithms/matching.py', 'config.py', 'main.py', 'requirements.txt', 'utils/__init__.py', 'utils/haversine.py', 'utils/live_traffic.py', 'utils/osrm_client.py']
+[21:23:14] Step 2: Building commit operations...
+[21:23:14]   15 files to delete
+[21:23:14]   + main.py (25885 bytes)
+[21:23:14]   + config.py (3521 bytes)
+[21:23:14]   + requirements.txt (129 bytes)
+[21:23:14]   + Dockerfile (244 bytes)
+[21:23:14]   + algorithms/__init__.py (0 bytes)
+[21:23:14]   + algorithms/astar.py (30372 bytes)
+[21:23:14]   + algorithms/emissions.py (5564 bytes)
+[21:23:14]   + algorithms/graph_builder.py (8910 bytes)
+[21:23:14]   + algorithms/maharashtra_poi.py (30946 bytes)
+[21:23:14]   + algorithms/matching.py (13363 bytes)
+[21:23:14]   + utils/__init__.py (0 bytes)
+[21:23:14]   + utils/haversine.py (709 bytes)
+[21:23:14]   + utils/live_traffic.py (7959 bytes)
+[21:23:14]   + utils/osrm_client.py (2813 bytes)
+[21:23:14]   14 files to add
+[21:23:14] Step 3: Committing to Space...
+[21:23:18]   Commit OK: https://huggingface.co/spaces/Qrmanual/AUMOv3/commit/27ac9adbf71b87bafe2c22ec0319ddf1c86bb606
+[21:23:18] Step 4: Waiting for Space to rebuild (up to 360s)...
+[21:23:28]   Waiting... 10s
+[21:23:38]   Waiting... 20s
+[21:23:48]   Waiting... 30s
+[21:23:58]   Waiting... 40s
+[21:24:08]   Waiting... 50s
+[21:24:18]   Waiting... 60s
+[21:24:28]   Waiting... 70s
+[21:24:38]   Waiting... 80s
+[21:24:48]   Waiting... 90s
+[21:24:58]   Waiting... 100s
+[21:25:08]   Waiting... 110s
+[21:25:18]   Waiting... 120s
+[21:25:21]   [60s] Health: 503 Your space is in error, check its status on hf.co
+[21:25:39]   [75s] Health: 503 Your space is in error, check its status on hf.co
+[21:25:56]   [90s] Health: 503 Your space is in error, check its status on hf.co
+[21:26:13]   [105s] Health: 503 Your space is in error, check its status on hf.co
+[21:26:31]   [120s] Health: 503 Your space is in error, check its status on hf.co
+[21:26:48]   [135s] Health: 503 Your space is in error, check its status on hf.co
+[21:27:06]   [150s] Health: 503 Your space is in error, check its status on hf.co
+[21:27:23]   [165s] Health: 503 Your space is in error, check its status on hf.co
+[21:27:40]   [180s] Health: 503 Your space is in error, check its status on hf.co
+[21:27:58]   [195s] Health: 503 Your space is in error, check its status on hf.co
+[21:28:16]   [210s] Health: 503 Your space is in error, check its status on hf.co
+[21:28:35]   [225s] Health: 503 Your space is in error, check its status on hf.co
+[21:28:53]   [240s] Health: 503 Your space is in error, check its status on hf.co
+[21:29:11]   [255s] Health: 503 Your space is in error, check its status on hf.co
+[21:29:28]   [270s] Health: 503 Your space is in error, check its status on hf.co
+[21:29:46]   [285s] Health: 503 Your space is in error, check its status on hf.co
+[21:30:04]   [300s] Health: 503 Your space is in error, check its status on hf.co
+[21:30:22]   [315s] Health: 503 Your space is in error, check its status on hf.co
+[21:30:41]   [330s] Health: 503 Your space is in error, check its status on hf.co
+[21:30:58]   [345s] Health: 503 Your space is in error, check its status on hf.co
+[21:31:16]   Final root check: 503 Your space is in error, check its status on hf.co
+[21:31:16] DONE — check deploy_log.txt for results

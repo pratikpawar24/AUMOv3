@@ -1,0 +1,4 @@
+FILES: [('Dockerfile', 304), ('README.md', 121), ('main.py', 373), ('requirements.txt', 156)]
+STAGE: RUNNING_APP_STARTING
+HEALTH: 200 {"status":"healthy","version":"test-0.0.1"}
+ROOT: 200 {"status":"alive","service":"minimal-test"}

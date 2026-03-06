@@ -35,11 +35,23 @@ class GraphConfig:
 
 
 @dataclass
+class ScoreWeights:
+    route_overlap: float = 0.35
+    time_compatibility: float = 0.25
+    preference_match: float = 0.15
+    proximity: float = 0.25
+
+
+@dataclass
 class MatchingConfig:
     dbscan_eps_km: float = 2.0
-    dbscan_min_pts: int = 2
+    dbscan_min_samples: int = 2
+    max_detour_km: float = 10.0
     max_detour_ratio: float = 0.3
     min_match_score: float = 0.4
+    max_time_diff_minutes: float = 30.0
+    max_walk_km: float = 2.0
+    score_weights: ScoreWeights = field(default_factory=ScoreWeights)
     w_route_overlap: float = 0.35
     w_time_compat: float = 0.25
     w_pref_match: float = 0.15

@@ -1,11 +1,11 @@
 """
-Carpool Matching Algorithm — DBSCAN + Multi-Factor Scoring
+Carpool Matching Algorithm — Haversine Clustering + Multi-Factor Scoring
 
 Architecture:
-  1. Spatial Clustering (DBSCAN):
+  1. Spatial Clustering (Pure-numpy DBSCAN-style):
      - Cluster ride offers by pickup proximity
      - ε = 2 km, MinPts = 2
-     - Uses haversine distance metric
+     - Uses haversine distance metric (no scikit-learn needed)
 
   2. Multi-Factor Compatibility Score:
      S = 0.35·RouteOverlap + 0.25·TimeCompat + 0.15·PrefMatch + 0.25·Proximity
@@ -26,7 +26,6 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 import numpy as np
-from sklearn.cluster import DBSCAN
 
 from utils.haversine import haversine_km
 from algorithms.emissions import calculate_ride_emissions, calculate_carpool_savings
@@ -88,9 +87,10 @@ def cluster_rides(
     eps_km: float = None,
     min_samples: int = None,
 ) -> Dict[int, List[RideOffer]]:
-    """Cluster ride offers using DBSCAN on pickup locations.
+    """Cluster ride offers using simple haversine distance clustering.
     
-    Uses haversine distance in km for DBSCAN metric.
+    Pure-numpy replacement for DBSCAN — no scikit-learn needed.
+    Uses greedy distance-based clustering with haversine metric.
     """
     if eps_km is None:
         eps_km = matching_config.dbscan_eps_km
@@ -100,22 +100,55 @@ def cluster_rides(
     if not offers:
         return {}
 
-    # Extract coordinates
-    coords = np.array([[o.origin_lat, o.origin_lng] for o in offers])
-    
-    # Convert eps from km to radians for haversine metric
-    eps_rad = eps_km / 6371.0  # Earth radius in km
+    n = len(offers)
+    labels = [-1] * n
+    cluster_id = 0
 
-    db = DBSCAN(
-        eps=eps_rad,
-        min_samples=min_samples,
-        metric="haversine",
-        algorithm="ball_tree",
-    )
-    
-    # DBSCAN expects radians
-    coords_rad = np.radians(coords)
-    labels = db.fit_predict(coords_rad)
+    for i in range(n):
+        if labels[i] != -1:
+            continue
+        # Find all neighbors within eps_km
+        neighbors = []
+        for j in range(n):
+            if i == j:
+                continue
+            dist = haversine_km(
+                offers[i].origin_lat, offers[i].origin_lng,
+                offers[j].origin_lat, offers[j].origin_lng,
+            )
+            if dist <= eps_km:
+                neighbors.append(j)
+
+        if len(neighbors) + 1 < min_samples:
+            # Not enough neighbors — noise point
+            continue
+
+        # Start a new cluster
+        labels[i] = cluster_id
+        seed_set = list(neighbors)
+        idx = 0
+        while idx < len(seed_set):
+            q = seed_set[idx]
+            idx += 1
+            if labels[q] != -1 and labels[q] != -2:
+                continue  # already in a cluster
+            labels[q] = cluster_id
+            # Find q's neighbors
+            q_neighbors = []
+            for j in range(n):
+                if q == j:
+                    continue
+                dist = haversine_km(
+                    offers[q].origin_lat, offers[q].origin_lng,
+                    offers[j].origin_lat, offers[j].origin_lng,
+                )
+                if dist <= eps_km:
+                    q_neighbors.append(j)
+            if len(q_neighbors) + 1 >= min_samples:
+                for nb in q_neighbors:
+                    if nb not in seed_set and labels[nb] == -1:
+                        seed_set.append(nb)
+        cluster_id += 1
 
     clusters: Dict[int, List[RideOffer]] = {}
     for i, label in enumerate(labels):

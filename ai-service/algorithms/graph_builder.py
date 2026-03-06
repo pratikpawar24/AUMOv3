@@ -201,13 +201,16 @@ def build_synthetic_graph(
 
 
 def find_nearest_node(G: nx.DiGraph, lat: float, lng: float) -> Optional[int]:
-    """Find the nearest graph node using KD-tree spatial index (O(log n))."""
-    kdtree = getattr(G, '_kdtree', None)
-    node_ids = getattr(G, '_kdtree_ids', None)
-    if kdtree is not None and node_ids is not None:
-        dist, idx = kdtree.query([lat, lng])
+    """Find the nearest graph node using vectorized numpy distance (fast)."""
+    coords = getattr(G, '_spatial_coords', None)
+    node_ids = getattr(G, '_spatial_ids', None)
+    if coords is not None and node_ids is not None:
+        # Vectorized Euclidean distance on lat/lng (good enough for small areas)
+        diffs = coords - np.array([lat, lng])
+        dists = np.sum(diffs ** 2, axis=1)
+        idx = np.argmin(dists)
         return node_ids[idx]
-    # Fallback: linear scan (slow for large graphs)
+    # Fallback: linear scan
     min_dist = float("inf")
     nearest = None
     for node_id, data in G.nodes(data=True):
@@ -219,8 +222,11 @@ def find_nearest_node(G: nx.DiGraph, lat: float, lng: float) -> Optional[int]:
 
 
 def build_spatial_index(G: nx.DiGraph):
-    """Build a KD-tree spatial index on the graph for O(log n) nearest-node lookups."""
-    from scipy.spatial import cKDTree
+    """Build a numpy-based spatial index on the graph for nearest-node lookups.
+    
+    Pure-numpy replacement for scipy.spatial.cKDTree — no scipy needed.
+    Uses brute-force vectorized distance (fast enough for <100k nodes).
+    """
     node_ids = []
     coords = []
     for nid, data in G.nodes(data=True):
@@ -228,7 +234,7 @@ def build_spatial_index(G: nx.DiGraph):
         coords.append([data["lat"], data["lng"]])
     if coords:
         arr = np.array(coords)
-        G._kdtree = cKDTree(arr)
-        G._kdtree_ids = node_ids
-        print(f"[GraphBuilder] KD-tree spatial index built for {len(node_ids)} nodes")
+        G._spatial_coords = arr
+        G._spatial_ids = node_ids
+        print(f"[GraphBuilder] Spatial index built for {len(node_ids)} nodes")
     return G
