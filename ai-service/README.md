@@ -1,6 +1,6 @@
 ---
 title: AUMOv3
-emoji: ??
+emoji: 🚗
 colorFrom: blue
 colorTo: green
 sdk: docker
@@ -9,4 +9,4 @@ pinned: false
 
 # AUMOv3 AI Gateway
 
-FastAPI gateway for AUMO carpooling platform. Pure numpy, no scipy/sklearn.
+FastAPI gateway for AUMO carpooling platform.
