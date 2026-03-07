@@ -11,13 +11,20 @@ export async function getRoute(req: Request, res: Response) {
   } catch (err: any) {
     logger.error("Route", "Route calculation failed", err);
     const status = err?.response?.status;
+    const upstreamMsg = err?.response?.data?.detail || err?.response?.data?.error || "";
     if (status === 503) {
       return res.status(503).json({ error: "AI routing service is still initializing. Please try again in 1-2 minutes.", code: "SERVICE_INITIALIZING" });
     }
     if (status === 504 || err?.code === "ECONNABORTED") {
       return res.status(504).json({ error: "Route calculation timed out. The AI service may be loading a large graph.", code: "TIMEOUT" });
     }
-    res.status(500).json({ error: "Route calculation failed", details: err.message });
+    if (status === 404) {
+      return res.status(404).json({ error: upstreamMsg || "No route found between the given points", code: "NO_ROUTE" });
+    }
+    if (!err?.response) {
+      return res.status(503).json({ error: "AI service is unreachable. It may be waking up — please retry in a minute.", code: "SERVICE_UNAVAILABLE" });
+    }
+    res.status(status || 500).json({ error: upstreamMsg || "Route calculation failed", details: err.message });
   }
 }
 
@@ -29,13 +36,20 @@ export async function getMultiRoute(req: Request, res: Response) {
   } catch (err: any) {
     logger.error("Route", "Multi-route failed", err);
     const status = err?.response?.status;
+    const upstreamMsg = err?.response?.data?.detail || err?.response?.data?.error || "";
     if (status === 503) {
       return res.status(503).json({ error: "AI routing service is still initializing. Please try again in 1-2 minutes.", code: "SERVICE_INITIALIZING" });
     }
     if (status === 504 || err?.code === "ECONNABORTED") {
       return res.status(504).json({ error: "Route calculation timed out. The AI service may be loading a large graph.", code: "TIMEOUT" });
     }
-    res.status(500).json({ error: "Multi-route failed", details: err.message });
+    if (status === 404) {
+      return res.status(404).json({ error: upstreamMsg || "No route found between the given points", code: "NO_ROUTE" });
+    }
+    if (!err?.response) {
+      return res.status(503).json({ error: "AI service is unreachable. It may be waking up — please retry in a minute.", code: "SERVICE_UNAVAILABLE" });
+    }
+    res.status(status || 500).json({ error: upstreamMsg || "Multi-route failed", details: err.message });
   }
 }
 

@@ -24,11 +24,59 @@ interface NominatimResult {
 
 async function searchLocation(query: string): Promise<NominatimResult[]> {
   if (!query || query.length < 2) return [];
-  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=6&addressdetails=1&viewbox=72.5,20.5,75.5,17.5&bounded=0`;
-  const res = await fetch(url, {
-    headers: { "Accept-Language": "en", "User-Agent": "AUMOv3/3.0" },
-  });
-  return res.json();
+
+  // Use Photon API (OpenStreetMap-based) for better street/building/colony results
+  // plus Nominatim as fallback — merge & deduplicate
+  const results: NominatimResult[] = [];
+  const seen = new Set<string>();
+
+  // 1) Photon API — great for streets, buildings, colonies, villages
+  try {
+    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=18.52&lon=73.85&limit=10&lang=en&layer=street,house,locality,district,city,county`;
+    const photonRes = await fetch(photonUrl);
+    const photonData = await photonRes.json();
+    for (const f of photonData.features || []) {
+      const p = f.properties || {};
+      const coords = f.geometry?.coordinates;
+      if (!coords) continue;
+      const parts = [p.name, p.street, p.district, p.city, p.county, p.state].filter(Boolean);
+      const displayName = parts.join(", ") || p.name || "";
+      const key = `${parseFloat(coords[1]).toFixed(4)},${parseFloat(coords[0]).toFixed(4)}`;
+      if (!seen.has(key) && displayName) {
+        seen.add(key);
+        results.push({
+          place_id: f.properties?.osm_id || Math.random(),
+          display_name: displayName,
+          lat: String(coords[1]),
+          lon: String(coords[0]),
+          type: p.osm_value || p.type || "place",
+          address: { city: p.city, state: p.state, district: p.district },
+        });
+      }
+    }
+  } catch (e) {
+    /* Photon failed, continue with Nominatim */
+  }
+
+  // 2) Nominatim — broader coverage, deduplicate against Photon results
+  try {
+    const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=8&addressdetails=1&viewbox=72.5,20.5,75.5,17.5&bounded=0&dedupe=1`;
+    const nomRes = await fetch(nomUrl, {
+      headers: { "Accept-Language": "en", "User-Agent": "AUMOv3/3.0" },
+    });
+    const nomData: NominatimResult[] = await nomRes.json();
+    for (const r of nomData) {
+      const key = `${parseFloat(r.lat).toFixed(4)},${parseFloat(r.lon).toFixed(4)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push(r);
+      }
+    }
+  } catch (e) {
+    /* Nominatim failed */
+  }
+
+  return results.slice(0, 15);
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
@@ -231,10 +279,15 @@ export default function HomePage() {
         setRoutes({ balanced: res.data.route });
       } catch (err2: any) {
         const msg = err2?.response?.data?.error || err?.response?.data?.error || "Route calculation failed.";
-        if (msg.includes("initializing")) {
-          alert("The AI routing service is still starting up. Please wait 1-2 minutes and try again.");
+        const code = err2?.response?.data?.code || err?.response?.data?.code || "";
+        if (code === "SERVICE_INITIALIZING" || msg.includes("initializing")) {
+          alert("🔄 The AI routing service is still starting up. Please wait 1-2 minutes and try again.");
+        } else if (code === "SERVICE_UNAVAILABLE" || msg.includes("unreachable")) {
+          alert("⏳ The AI service is waking up (HuggingFace Spaces sleep when idle). Please wait ~30 seconds and retry.");
+        } else if (code === "NO_ROUTE" || msg.includes("No route")) {
+          alert("❌ No route found between these locations. Try points closer to Pune city (the routing graph covers the Pune metro area).");
         } else {
-          alert(msg);
+          alert(`Route error: ${msg}`);
         }
       }
     }

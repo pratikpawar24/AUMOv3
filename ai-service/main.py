@@ -213,6 +213,16 @@ app.add_middleware(
 )
 
 
+# Global exception handler — catch unhandled errors and return proper JSON
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.url.path}: {traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)[:200]}"},
+    )
+
+
 # ═══════════════════════════════════════════════════════════════
 # Proxy Helper
 # ═══════════════════════════════════════════════════════════════
@@ -381,77 +391,113 @@ async def route_status():
 async def calculate_route(req: RouteRequest):
     """Calculate optimal route using AUMORoute™."""
     if not state["ready"] or state["graph"] is None:
-        raise HTTPException(503, "Service not ready")
+        raise HTTPException(503, "Service not ready — graph still loading")
 
-    G = state["graph"]
-    start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
-    goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
+    try:
+        G = state["graph"]
+        start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
+        goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
 
-    if start_node is None or goal_node is None:
-        raise HTTPException(404, "Could not find nodes near the given coordinates")
+        if start_node is None or goal_node is None:
+            raise HTTPException(404, "Could not find nodes near the given coordinates")
 
-    dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        try:
+            dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        except (ValueError, TypeError):
+            dep_time = datetime.now()
 
-    result = astar_route(
-        G, start_node, goal_node, dep_time,
-        alpha=req.alpha, beta=req.beta,
-        gamma=req.gamma, delta=req.delta,
-        traffic_predictions=None,
-        ch=state["ch"],
-        avoid_congested=req.avoid_congested,
-    )
+        result = astar_route(
+            G, start_node, goal_node, dep_time,
+            alpha=req.alpha, beta=req.beta,
+            gamma=req.gamma, delta=req.delta,
+            traffic_predictions=None,
+            ch=state["ch"],
+            avoid_congested=req.avoid_congested,
+        )
 
-    if result is None:
-        raise HTTPException(404, "No route found between the given points")
+        if result is None:
+            raise HTTPException(404, "No route found between the given points")
 
-    overlay = get_traffic_overlay(G, result["path_nodes"], current_time=dep_time)
-    result["trafficOverlay"] = overlay
+        try:
+            overlay = get_traffic_overlay(G, result.get("path_nodes", []), current_time=dep_time)
+            result["trafficOverlay"] = overlay
+        except Exception as e:
+            logger.warning(f"Traffic overlay failed: {e}")
+            result["trafficOverlay"] = []
 
-    co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
-    result["co2Details"] = co2
-    result["treeDaysEquivalent"] = co2_to_tree_days(co2.get("co2_grams", 0))
+        try:
+            co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
+            result["co2Details"] = co2
+            result["treeDaysEquivalent"] = co2_to_tree_days(co2.get("co2_grams", 0))
+        except Exception as e:
+            logger.warning(f"Emission calc failed: {e}")
+            result["co2Details"] = {"co2_grams": 0, "distance_km": result.get("distanceKm", 0)}
+            result["treeDaysEquivalent"] = 0
 
-    return {"success": True, "route": result}
+        return {"success": True, "route": result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Route calculation error: {traceback.format_exc()}")
+        raise HTTPException(500, f"Route calculation failed: {str(e)[:200]}")
 
 
 @app.post("/api/multi-route")
 async def multi_route(req: MultiRouteRequest):
     """Compare routes with different optimization strategies."""
     if not state["ready"] or state["graph"] is None:
-        raise HTTPException(503, "Service not ready")
+        raise HTTPException(503, "Service not ready — graph still loading")
 
-    G = state["graph"]
-    start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
-    goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
+    try:
+        G = state["graph"]
+        start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
+        goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
 
-    if start_node is None or goal_node is None:
-        raise HTTPException(404, "Could not find nodes near coordinates")
+        if start_node is None or goal_node is None:
+            raise HTTPException(404, "Could not find nodes near coordinates")
 
-    dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        try:
+            dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        except (ValueError, TypeError):
+            dep_time = datetime.now()
 
-    strategies = {
-        "fastest":     {"alpha": 0.7, "beta": 0.1, "gamma": 0.1, "delta": 0.1},
-        "eco":         {"alpha": 0.2, "beta": 0.6, "gamma": 0.1, "delta": 0.1},
-        "shortest":    {"alpha": 0.1, "beta": 0.1, "gamma": 0.7, "delta": 0.1},
-        "balanced":    {"alpha": 0.4, "beta": 0.3, "gamma": 0.15, "delta": 0.15},
-        "low_traffic": {"alpha": 0.2, "beta": 0.1, "gamma": 0.1, "delta": 0.6},
-    }
+        strategies = {
+            "fastest":     {"alpha": 0.7, "beta": 0.1, "gamma": 0.1, "delta": 0.1},
+            "eco":         {"alpha": 0.2, "beta": 0.6, "gamma": 0.1, "delta": 0.1},
+            "shortest":    {"alpha": 0.1, "beta": 0.1, "gamma": 0.7, "delta": 0.1},
+            "balanced":    {"alpha": 0.4, "beta": 0.3, "gamma": 0.15, "delta": 0.15},
+            "low_traffic": {"alpha": 0.2, "beta": 0.1, "gamma": 0.1, "delta": 0.6},
+        }
 
-    routes = {}
-    for name, weights in strategies.items():
-        result = astar_route(
-            G, start_node, goal_node, dep_time,
-            **weights, ch=state["ch"],
-        )
-        if result:
-            co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
-            result["co2Details"] = co2
-            routes[name] = result
+        routes = {}
+        for name, weights in strategies.items():
+            try:
+                result = astar_route(
+                    G, start_node, goal_node, dep_time,
+                    **weights, ch=state["ch"],
+                )
+                if result:
+                    try:
+                        co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
+                        result["co2Details"] = co2
+                    except Exception:
+                        result["co2Details"] = {"co2_grams": 0, "distance_km": result.get("distanceKm", 0)}
+                    routes[name] = result
+            except Exception as e:
+                logger.warning(f"Strategy '{name}' failed: {e}")
+                continue
 
-    if not routes:
-        raise HTTPException(404, "No routes found")
+        if not routes:
+            raise HTTPException(404, "No routes found between the given points")
 
-    return {"success": True, "routes": routes}
+        return {"success": True, "routes": routes}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Multi-route error: {traceback.format_exc()}")
+        raise HTTPException(500, f"Multi-route calculation failed: {str(e)[:200]}")
 
 
 @app.post("/api/match")
@@ -533,65 +579,96 @@ async def calculate_emissions(req: EmissionRequest):
 async def reroute(req: RerouteRequest):
     """Dynamic rerouting based on current traffic."""
     if not state["ready"] or state["graph"] is None:
-        raise HTTPException(503, "Service not ready")
+        raise HTTPException(503, "Service not ready — graph still loading")
 
-    dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
-    weights = req.weights or {"alpha": 0.4, "beta": 0.3, "gamma": 0.15, "delta": 0.15}
+    try:
+        try:
+            dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        except (ValueError, TypeError):
+            dep_time = datetime.now()
 
-    result = dynamic_reroute(
-        state["graph"],
-        (req.current_lat, req.current_lng),
-        (req.dest_lat, req.dest_lng),
-        dep_time,
-        current_traffic={},
-        weights=weights,
-        ch=state["ch"],
-    )
+        weights = req.weights or {"alpha": 0.4, "beta": 0.3, "gamma": 0.15, "delta": 0.15}
 
-    if result is None:
-        raise HTTPException(404, "No alternative route found")
+        result = dynamic_reroute(
+            state["graph"],
+            (req.current_lat, req.current_lng),
+            (req.dest_lat, req.dest_lng),
+            dep_time,
+            current_traffic={},
+            weights=weights,
+            ch=state["ch"],
+        )
 
-    co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
-    result["co2Details"] = co2
+        if result is None:
+            raise HTTPException(404, "No alternative route found")
 
-    return {"success": True, "route": result}
+        try:
+            co2 = calculate_ride_emissions(result["distanceKm"], result.get("durationMin", 30))
+            result["co2Details"] = co2
+        except Exception:
+            result["co2Details"] = {"co2_grams": 0, "distance_km": result.get("distanceKm", 0)}
+
+        return {"success": True, "route": result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reroute error: {traceback.format_exc()}")
+        raise HTTPException(500, f"Reroute failed: {str(e)[:200]}")
 
 
 @app.post("/api/routes/alternatives")
 async def alternative_routes(req: RouteRequest):
     """Find K alternative routes using Yen's K-shortest paths algorithm."""
     if not state["ready"] or state["graph"] is None:
-        raise HTTPException(503, "Service not ready")
+        raise HTTPException(503, "Service not ready — graph still loading")
 
-    G = state["graph"]
-    start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
-    goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
+    try:
+        G = state["graph"]
+        start_node = find_nearest_node(G, req.origin_lat, req.origin_lng)
+        goal_node = find_nearest_node(G, req.dest_lat, req.dest_lng)
 
-    if start_node is None or goal_node is None:
-        raise HTTPException(404, "Could not find nodes near the given coordinates")
+        if start_node is None or goal_node is None:
+            raise HTTPException(404, "Could not find nodes near the given coordinates")
 
-    dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        try:
+            dep_time = datetime.fromisoformat(req.departure_time) if req.departure_time else datetime.now()
+        except (ValueError, TypeError):
+            dep_time = datetime.now()
 
-    routes = yen_k_shortest_paths(
-        G, start_node, goal_node,
-        departure_time=dep_time,
-        K=3,
-        alpha=req.alpha, beta=req.beta,
-        gamma=req.gamma, delta=req.delta,
-        ch=state["ch"],
-    )
+        routes = yen_k_shortest_paths(
+            G, start_node, goal_node,
+            departure_time=dep_time,
+            K=3,
+            alpha=req.alpha, beta=req.beta,
+            gamma=req.gamma, delta=req.delta,
+            ch=state["ch"],
+        )
 
-    if not routes:
-        raise HTTPException(404, "No routes found between the given points")
+        if not routes:
+            raise HTTPException(404, "No routes found between the given points")
 
-    for r in routes:
-        overlay = get_traffic_overlay(G, r["path_nodes"], current_time=dep_time)
-        r["trafficOverlay"] = overlay
-        co2 = calculate_ride_emissions(r["distanceKm"], r.get("durationMin", 30))
-        r["co2Details"] = co2
-        r["treeDaysEquivalent"] = co2_to_tree_days(co2.get("co2_grams", 0))
+        for r in routes:
+            try:
+                overlay = get_traffic_overlay(G, r.get("path_nodes", []), current_time=dep_time)
+                r["trafficOverlay"] = overlay
+            except Exception:
+                r["trafficOverlay"] = []
+            try:
+                co2 = calculate_ride_emissions(r["distanceKm"], r.get("durationMin", 30))
+                r["co2Details"] = co2
+                r["treeDaysEquivalent"] = co2_to_tree_days(co2.get("co2_grams", 0))
+            except Exception:
+                r["co2Details"] = {"co2_grams": 0, "distance_km": r.get("distanceKm", 0)}
+                r["treeDaysEquivalent"] = 0
 
-    return {"success": True, "routes": routes, "count": len(routes)}
+        return {"success": True, "routes": routes, "count": len(routes)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Alternative routes error: {traceback.format_exc()}")
+        raise HTTPException(500, f"Alternative routes failed: {str(e)[:200]}")
 
 
 @app.get("/api/traffic/heatmap")

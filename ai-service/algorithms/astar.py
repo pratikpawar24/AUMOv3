@@ -673,14 +673,16 @@ def get_traffic_overlay(
             "speed": round(speed, 1),
         })
 
-    if path_nodes:
-        last_node = G.nodes[path_nodes[-1]]
-        overlay.append({
-            "lat": last_node["lat"],
-            "lng": last_node["lng"],
-            "congestion": overlay[-1]["congestion"] if overlay else 0.0,
-            "speed": overlay[-1]["speed"] if overlay else 40.0,
-        })
+    if path_nodes and len(path_nodes) > 0:
+        last_node_id = path_nodes[-1]
+        if last_node_id in G.nodes:
+            last_node = G.nodes[last_node_id]
+            overlay.append({
+                "lat": last_node["lat"],
+                "lng": last_node["lng"],
+                "congestion": overlay[-1]["congestion"] if overlay else 0.0,
+                "speed": overlay[-1]["speed"] if overlay else 40.0,
+            })
 
     return overlay
 

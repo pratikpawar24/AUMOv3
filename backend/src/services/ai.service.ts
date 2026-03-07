@@ -6,15 +6,18 @@ const aiClient = axios.create({
   timeout: 300000,
 });
 
-// Retry wrapper: retries on 503 (service initializing) up to 3 times with exponential backoff
+// Retry wrapper: retries on 503 (initializing), 500 (server error), or connection errors
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 5000): Promise<T> {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (err: any) {
       const status = err?.response?.status;
-      if (status === 503 && i < retries - 1) {
-        await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+      const isRetryable = status === 503 || status === 500 || status === 502 || !err?.response;
+      if (isRetryable && i < retries - 1) {
+        const waitMs = delayMs * (i + 1);
+        console.log(`[AI Service] Retry ${i + 1}/${retries - 1} after ${waitMs}ms (status: ${status || 'connection error'})`);
+        await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
       throw err;
