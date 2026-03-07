@@ -25,63 +25,55 @@ interface NominatimResult {
 async function searchLocation(query: string): Promise<NominatimResult[]> {
   if (!query || query.length < 2) return [];
 
-  // Use Nominatim as primary + Photon API as supplement for street-level results
+  // Use Photon API (OpenStreetMap-based) for better street/building/colony results
+  // plus Nominatim as fallback — merge & deduplicate
   const results: NominatimResult[] = [];
   const seen = new Set<string>();
 
-  // 1) Nominatim — reliable primary source with India country code
+  // 1) Photon API — great for streets, buildings, colonies, villages
   try {
-    const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=10&addressdetails=1&viewbox=72.5,20.5,75.5,17.5&bounded=0&dedupe=1`;
-    const nomRes = await fetch(nomUrl, {
-      headers: { "Accept-Language": "en", "User-Agent": "AUMOv3/3.0" },
-    });
-    if (nomRes.ok) {
-      const nomData: NominatimResult[] = await nomRes.json();
-      for (const r of nomData) {
-        const key = `${parseFloat(r.lat).toFixed(4)},${parseFloat(r.lon).toFixed(4)}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          results.push(r);
-        }
+    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=18.52&lon=73.85&limit=10&lang=en&layer=street,house,locality,district,city,county`;
+    const photonRes = await fetch(photonUrl);
+    const photonData = await photonRes.json();
+    for (const f of photonData.features || []) {
+      const p = f.properties || {};
+      const coords = f.geometry?.coordinates;
+      if (!coords) continue;
+      const parts = [p.name, p.street, p.district, p.city, p.county, p.state].filter(Boolean);
+      const displayName = parts.join(", ") || p.name || "";
+      const key = `${parseFloat(coords[1]).toFixed(4)},${parseFloat(coords[0]).toFixed(4)}`;
+      if (!seen.has(key) && displayName) {
+        seen.add(key);
+        results.push({
+          place_id: f.properties?.osm_id || Math.random(),
+          display_name: displayName,
+          lat: String(coords[1]),
+          lon: String(coords[0]),
+          type: p.osm_value || p.type || "place",
+          address: { city: p.city, state: p.state, district: p.district },
+        });
       }
     }
   } catch (e) {
-    /* Nominatim failed, continue */
+    /* Photon failed, continue with Nominatim */
   }
 
-  // 2) Photon API — supplement for streets, buildings, colonies (skip if Nominatim got enough)
-  if (results.length < 8) {
-    try {
-      const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=18.52&lon=73.85&limit=8&lang=en`;
-      const photonRes = await fetch(photonUrl);
-      if (photonRes.ok) {
-        const text = await photonRes.text();
-        if (text && text.startsWith("{")) {
-          const photonData = JSON.parse(text);
-          for (const f of photonData.features || []) {
-            const p = f.properties || {};
-            const coords = f.geometry?.coordinates;
-            if (!coords) continue;
-            const parts = [p.name, p.street, p.district, p.city, p.county, p.state].filter(Boolean);
-            const displayName = parts.join(", ") || p.name || "";
-            const key = `${parseFloat(coords[1]).toFixed(4)},${parseFloat(coords[0]).toFixed(4)}`;
-            if (!seen.has(key) && displayName) {
-              seen.add(key);
-              results.push({
-                place_id: f.properties?.osm_id || Math.random(),
-                display_name: displayName,
-                lat: String(coords[1]),
-                lon: String(coords[0]),
-                type: p.osm_value || p.type || "place",
-                address: { city: p.city, state: p.state, district: p.district },
-              });
-            }
-          }
-        }
+  // 2) Nominatim — broader coverage, deduplicate against Photon results
+  try {
+    const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=8&addressdetails=1&viewbox=72.5,20.5,75.5,17.5&bounded=0&dedupe=1`;
+    const nomRes = await fetch(nomUrl, {
+      headers: { "Accept-Language": "en", "User-Agent": "AUMOv3/3.0" },
+    });
+    const nomData: NominatimResult[] = await nomRes.json();
+    for (const r of nomData) {
+      const key = `${parseFloat(r.lat).toFixed(4)},${parseFloat(r.lon).toFixed(4)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push(r);
       }
-    } catch (e) {
-      /* Photon failed, continue with Nominatim results only */
     }
+  } catch (e) {
+    /* Nominatim failed */
   }
 
   return results.slice(0, 15);
