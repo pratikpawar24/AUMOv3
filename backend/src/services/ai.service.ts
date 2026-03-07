@@ -3,20 +3,21 @@ import { env } from "../config/env";
 
 const aiClient = axios.create({
   baseURL: env.AI_SERVICE_URL,
-  timeout: 300000,
+  timeout: 60000,
 });
 
-// Retry wrapper: retries on 503 (initializing), 500 (server error), or connection errors
-async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 5000): Promise<T> {
+// Retry wrapper: retries on 503 (initializing), 500 (server error), timeout, or connection errors
+async function withRetry<T>(fn: () => Promise<T>, retries = 4, delayMs = 8000): Promise<T> {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (err: any) {
       const status = err?.response?.status;
-      const isRetryable = status === 503 || status === 500 || status === 502 || !err?.response;
+      const isTimeout = err?.code === "ECONNABORTED" || err?.code === "ERR_CANCELED";
+      const isRetryable = status === 503 || status === 500 || status === 502 || isTimeout || !err?.response;
       if (isRetryable && i < retries - 1) {
         const waitMs = delayMs * (i + 1);
-        console.log(`[AI Service] Retry ${i + 1}/${retries - 1} after ${waitMs}ms (status: ${status || 'connection error'})`);
+        console.log(`[AI Service] Retry ${i + 1}/${retries - 1} after ${waitMs}ms (status: ${status || (isTimeout ? 'timeout' : 'connection error')})`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }

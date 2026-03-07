@@ -12,11 +12,12 @@ export async function getRoute(req: Request, res: Response) {
     logger.error("Route", "Route calculation failed", err);
     const status = err?.response?.status;
     const upstreamMsg = err?.response?.data?.detail || err?.response?.data?.error || "";
+    const isTimeout = err?.code === "ECONNABORTED" || err?.code === "ERR_CANCELED" || err?.message?.includes("timeout");
+    if (isTimeout) {
+      return res.status(504).json({ error: "Route calculation timed out. The AI service may be loading — please retry in 1-2 minutes.", code: "TIMEOUT" });
+    }
     if (status === 503) {
       return res.status(503).json({ error: "AI routing service is still initializing. Please try again in 1-2 minutes.", code: "SERVICE_INITIALIZING" });
-    }
-    if (status === 504 || err?.code === "ECONNABORTED") {
-      return res.status(504).json({ error: "Route calculation timed out. The AI service may be loading a large graph.", code: "TIMEOUT" });
     }
     if (status === 404) {
       return res.status(404).json({ error: upstreamMsg || "No route found between the given points", code: "NO_ROUTE" });
@@ -37,11 +38,12 @@ export async function getMultiRoute(req: Request, res: Response) {
     logger.error("Route", "Multi-route failed", err);
     const status = err?.response?.status;
     const upstreamMsg = err?.response?.data?.detail || err?.response?.data?.error || "";
+    const isTimeout = err?.code === "ECONNABORTED" || err?.code === "ERR_CANCELED" || err?.message?.includes("timeout");
+    if (isTimeout) {
+      return res.status(504).json({ error: "Route calculation timed out. The AI service may be loading — please retry in 1-2 minutes.", code: "TIMEOUT" });
+    }
     if (status === 503) {
       return res.status(503).json({ error: "AI routing service is still initializing. Please try again in 1-2 minutes.", code: "SERVICE_INITIALIZING" });
-    }
-    if (status === 504 || err?.code === "ECONNABORTED") {
-      return res.status(504).json({ error: "Route calculation timed out. The AI service may be loading a large graph.", code: "TIMEOUT" });
     }
     if (status === 404) {
       return res.status(404).json({ error: upstreamMsg || "No route found between the given points", code: "NO_ROUTE" });
