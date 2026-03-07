@@ -1,10 +1,27 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import { env } from "../config/env";
 
 const aiClient = axios.create({
   baseURL: env.AI_SERVICE_URL,
-  timeout: 120000,
+  timeout: 300000,
 });
+
+// Retry wrapper: retries on 503 (service initializing) up to 3 times with exponential backoff
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 5000): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 503 && i < retries - 1) {
+        await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
 
 export async function getRoute(params: {
   origin_lat: number; origin_lng: number;
@@ -12,8 +29,10 @@ export async function getRoute(params: {
   departure_time?: string;
   alpha?: number; beta?: number; gamma?: number; delta?: number;
 }) {
-  const res = await aiClient.post("/api/route", params);
-  return res.data;
+  return withRetry(async () => {
+    const res = await aiClient.post("/api/route", params);
+    return res.data;
+  });
 }
 
 export async function getMultiRoute(params: {
@@ -21,8 +40,10 @@ export async function getMultiRoute(params: {
   dest_lat: number; dest_lng: number;
   departure_time?: string;
 }) {
-  const res = await aiClient.post("/api/multi-route", params);
-  return res.data;
+  return withRetry(async () => {
+    const res = await aiClient.post("/api/multi-route", params);
+    return res.data;
+  });
 }
 
 export async function getEmissions(params: {

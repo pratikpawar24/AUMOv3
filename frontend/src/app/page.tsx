@@ -44,49 +44,6 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
   }
 }
 
-/* ── Overpass API — nearby stops/stations (free) ─────────── */
-interface NearbyStop {
-  id: number;
-  name: string;
-  type: string;
-  lat: number;
-  lng: number;
-}
-
-async function fetchNearbyStops(lat: number, lng: number, radius = 2000): Promise<NearbyStop[]> {
-  try {
-    const query = `
-      [out:json][timeout:10];
-      (
-        node["railway"="station"](around:${radius},${lat},${lng});
-        node["railway"="halt"](around:${radius},${lat},${lng});
-        node["highway"="bus_stop"](around:${radius},${lat},${lng});
-        node["amenity"="bus_station"](around:${radius},${lat},${lng});
-        node["station"="subway"](around:${radius},${lat},${lng});
-        node["public_transport"="stop_position"](around:${radius},${lat},${lng});
-      );
-      out body 20;
-    `;
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      body: `data=${encodeURIComponent(query)}`,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    });
-    const data = await res.json();
-    return (data.elements || [])
-      .filter((el: any) => el.tags?.name)
-      .map((el: any) => ({
-        id: el.id,
-        name: el.tags.name,
-        type: el.tags.railway ? "🚆 Railway" : el.tags.station === "subway" ? "🚇 Metro" : "🚌 Bus Stop",
-        lat: el.lat,
-        lng: el.lon,
-      }));
-  } catch {
-    return [];
-  }
-}
-
 /* ── Location Search Input Component ─────────────────────── */
 function LocationSearch({
   label,
@@ -208,7 +165,6 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [pois, setPois] = useState<POI[]>([]);
   const [showPois, setShowPois] = useState(true);
-  const [nearbyStops, setNearbyStops] = useState<NearbyStop[]>([]);
   const [weights, setWeights] = useState({ alpha: 0.4, beta: 0.3, gamma: 0.15, delta: 0.15 });
 
   // Fetch POIs on mount
@@ -217,12 +173,6 @@ export default function HomePage() {
       .then((r) => setPois(r.data.pois || []))
       .catch(() => {});
   }, []);
-
-  useEffect(() => {
-    const point = origin || destination;
-    if (!point) return;
-    fetchNearbyStops(point.lat, point.lng).then(setNearbyStops);
-  }, [origin, destination]);
 
   const handleMapClick = useCallback(async (lat: number, lng: number) => {
     const name = await reverseGeocode(lat, lng);
@@ -271,7 +221,7 @@ export default function HomePage() {
         departure_time: new Date().toISOString(),
       });
       setRoutes(res.data.routes || {});
-    } catch {
+    } catch (err: any) {
       try {
         const res = await api.post("/api/routes/calculate", {
           origin_lat: origin.lat, origin_lng: origin.lng,
@@ -279,8 +229,13 @@ export default function HomePage() {
           ...weights,
         });
         setRoutes({ balanced: res.data.route });
-      } catch {
-        alert("Route calculation failed. Make sure the AI service is running.");
+      } catch (err2: any) {
+        const msg = err2?.response?.data?.error || err?.response?.data?.error || "Route calculation failed.";
+        if (msg.includes("initializing")) {
+          alert("The AI routing service is still starting up. Please wait 1-2 minutes and try again.");
+        } else {
+          alert(msg);
+        }
       }
     }
     setLoading(false);
@@ -354,35 +309,6 @@ export default function HomePage() {
               🖱 Click Map → {clickMode === "origin" ? "Origin" : "Destination"}
             </button>
           </div>
-
-          {/* Nearby stops */}
-          {nearbyStops.length > 0 && (
-            <details className="group">
-              <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-400">
-                🚏 Nearby Stops & Stations ({nearbyStops.length})
-              </summary>
-              <div className="mt-2 max-h-36 overflow-y-auto space-y-1">
-                {nearbyStops.map((stop) => (
-                  <button
-                    key={stop.id}
-                    onClick={() => {
-                      if (!origin) {
-                        setOrigin({ lat: stop.lat, lng: stop.lng });
-                        setOriginName(stop.name);
-                      } else {
-                        setDestination({ lat: stop.lat, lng: stop.lng });
-                        setDestName(stop.name);
-                      }
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 text-xs rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition"
-                  >
-                    <span className="font-medium">{stop.type}</span>{" "}
-                    <span className="text-gray-700 dark:text-gray-300">{stop.name}</span>
-                  </button>
-                ))}
-              </div>
-            </details>
-          )}
 
           {/* Weight sliders */}
           <details className="group">
@@ -489,7 +415,6 @@ export default function HomePage() {
             onMapClick={handleMapClick}
             origin={origin}
             destination={destination}
-            nearbyStops={nearbyStops}
             className="h-[calc(100vh-4rem)]"
           />
         </main>

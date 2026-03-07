@@ -71,23 +71,38 @@ export async function getAllUsers(req: Request, res: Response) {
 export async function adminLogin(req: Request, res: Response) {
   try {
     const { email, password } = req.body;
-    // Simple admin check
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
     const { env: envConfig } = await import("../config/env");
-    if (email !== envConfig.ADMIN_EMAIL || password !== envConfig.ADMIN_PASSWORD) {
+    const adminEmail = envConfig.ADMIN_EMAIL || "admin@aumo3.com";
+    const adminPassword = envConfig.ADMIN_PASSWORD || "admin123";
+
+    if (email.trim().toLowerCase() !== adminEmail.trim().toLowerCase() || password !== adminPassword) {
       return res.status(401).json({ error: "Invalid admin credentials" });
     }
 
-    let admin = await User.findOne({ email, role: "admin" });
+    // Find or create admin user
+    let admin = await User.findOne({ email: adminEmail, role: "admin" });
     if (!admin) {
-      const bcrypt = await import("bcryptjs");
-      const hashed = await bcrypt.hash(password, 12);
-      admin = await User.create({ name: "Admin", email, password: hashed, role: "admin" });
+      // Also check if a user exists with this email but wrong role — upgrade it
+      admin = await User.findOne({ email: adminEmail });
+      if (admin) {
+        admin.role = "admin" as any;
+        await admin.save();
+      } else {
+        const bcrypt = await import("bcryptjs");
+        const hashed = await bcrypt.hash(password, 12);
+        admin = await User.create({ name: "Admin", email: adminEmail, password: hashed, role: "admin" });
+      }
     }
 
     const jwt = await import("jsonwebtoken");
     const token = jwt.sign({ id: admin._id, role: "admin" }, envConfig.JWT_SECRET, { expiresIn: "7d" });
     res.json({ token, user: { id: admin._id, name: admin.name, email: admin.email, role: "admin" } });
   } catch (err: any) {
+    console.error("Admin login error:", err);
     res.status(500).json({ error: err.message });
   }
 }

@@ -32,6 +32,7 @@ import os
 import asyncio
 import logging
 import traceback
+import pickle
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -75,26 +76,78 @@ state = {
     "graph": None,
     "ch": None,
     "ready": False,
+    "init_status": "starting",   # starting | synthetic_ready | loading_osm | ch_preprocessing | ready | error
+    "init_error": None,
 }
+
+CH_CACHE_PATH = os.environ.get("CH_CACHE_PATH", "ch_cache.pkl")
+GRAPH_CACHE_PATH = os.environ.get("GRAPH_CACHE_PATH", "graph_cache.pkl")
+
+
+def _load_cached_graph():
+    """Try to load cached OSM graph + CH from disk."""
+    try:
+        if os.path.exists(GRAPH_CACHE_PATH) and os.path.exists(CH_CACHE_PATH):
+            logger.info("[Cache] Loading cached graph from disk...")
+            with open(GRAPH_CACHE_PATH, "rb") as f:
+                G = pickle.load(f)
+            with open(CH_CACHE_PATH, "rb") as f:
+                ch = pickle.load(f)
+            if G and len(G.nodes()) > 1000:
+                logger.info(f"[Cache] Loaded graph: {len(G.nodes())} nodes, CH ready")
+                return G, ch
+    except Exception as e:
+        logger.warning(f"[Cache] Failed to load cache: {e}")
+    return None, None
+
+
+def _save_graph_cache(G, ch):
+    """Save OSM graph + CH to disk cache."""
+    try:
+        with open(GRAPH_CACHE_PATH, "wb") as f:
+            pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+        if ch:
+            with open(CH_CACHE_PATH, "wb") as f:
+                pickle.dump(ch, f, protocol=pickle.HIGHEST_PROTOCOL)
+        logger.info("[Cache] Saved graph + CH to disk cache")
+    except Exception as e:
+        logger.warning(f"[Cache] Failed to save cache: {e}")
 
 
 async def _init_graph():
-    """Background task: build synthetic graph, then upgrade to OSM."""
+    """Background task: try cached graph first, else build synthetic then upgrade to OSM."""
     await asyncio.sleep(1)  # Let uvicorn fully start
+
+    # Step 0: Try loading from cache
+    cached_G, cached_ch = _load_cached_graph()
+    if cached_G is not None:
+        build_spatial_index(cached_G)
+        state["graph"] = cached_G
+        state["ch"] = cached_ch
+        state["ready"] = True
+        state["init_status"] = "ready"
+        logger.info(f"[Graph] Loaded from cache: {len(cached_G.nodes())} nodes, CH={'yes' if cached_ch else 'no'}")
+        return
+
+    # Step 1: Build synthetic graph for immediate (degraded) service
     try:
         logger.info("[Graph] Building synthetic graph...")
+        state["init_status"] = "synthetic_ready"
         state["graph"] = build_synthetic_graph(graph_config.osm_bbox)
         build_spatial_index(state["graph"])
-        state["ready"] = True
+        state["ready"] = True  # Allow routes on synthetic graph
         logger.info(f"[Graph] Synthetic graph ready: {len(state['graph'].nodes())} nodes")
     except Exception as e:
         logger.error(f"[Graph] Synthetic graph failed: {e}")
+        state["init_status"] = "error"
+        state["init_error"] = str(e)
         state["ready"] = False
         return
 
-    # Now try to upgrade to real OSM graph
+    # Step 2: Upgrade to real OSM graph
     await asyncio.sleep(3)
     try:
+        state["init_status"] = "loading_osm"
         logger.info("[Graph] Fetching real OSM graph in background...")
         G = await build_graph()
         if G and len(G.nodes()) > 0:
@@ -102,19 +155,27 @@ async def _init_graph():
             state["graph"] = G
             logger.info(f"[Graph] Upgraded to OSM graph: {len(G.nodes())} nodes, {len(G.edges())} edges")
 
+            # Step 3: Run CH preprocessing
             if routing_config.ch_enabled:
                 try:
+                    state["init_status"] = "ch_preprocessing"
                     logger.info("[Graph] Running CH preprocessing...")
                     ch = ContractionHierarchies(G)
                     ch.preprocess()
                     state["ch"] = ch
                     logger.info("[Graph] CH preprocessing done")
+                    # Save to cache for fast restarts
+                    _save_graph_cache(G, ch)
                 except Exception as e:
                     logger.warning(f"[Graph] CH error: {e}")
+
+            state["init_status"] = "ready"
         else:
             logger.warning("[Graph] OSM fetch returned empty, keeping synthetic")
+            state["init_status"] = "ready"
     except Exception as e:
         logger.warning(f"[Graph] Background upgrade failed: {e}, keeping synthetic")
+        state["init_status"] = "ready"  # Still usable with synthetic
 
 
 @asynccontextmanager
@@ -299,6 +360,20 @@ async def health():
         "ml_service": "connected" if ml_ok else "unavailable",
         "data_service": "connected" if data_ok else "unavailable",
         "version": "3.0.0",
+    }
+
+
+@app.get("/api/route/status")
+async def route_status():
+    """Check routing service readiness status."""
+    return {
+        "ready": state["ready"],
+        "init_status": state.get("init_status", "unknown"),
+        "init_error": state.get("init_error"),
+        "graph_nodes": len(state["graph"].nodes()) if state["graph"] else 0,
+        "graph_edges": len(state["graph"].edges()) if state["graph"] else 0,
+        "ch_ready": state["ch"] is not None,
+        "graph_type": "osm" if state["graph"] and len(state["graph"].nodes()) > 5000 else "synthetic" if state["graph"] else "none",
     }
 
 

@@ -162,17 +162,21 @@ def save_model_local(model: TrafficLSTM):
         print(f"[ML] Save error: {e}")
 
 
-def load_model_local() -> TrafficLSTM:
-    """Load model from local file, or use random init."""
-    model = TrafficLSTM()
+def load_model_local() -> TrafficLSTM | None:
+    """Load model from local file, or return None if no saved model exists."""
+    if not os.path.exists(MODEL_PATH):
+        print(f"[ML] No saved model at {MODEL_PATH}")
+        return None
     try:
+        model = TrafficLSTM()
         state_dict = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
         print(f"[ML] Model loaded from {MODEL_PATH}")
+        return model
     except Exception as e:
-        print(f"[ML] Using random init: {e}")
-    return model
+        print(f"[ML] Failed to load model: {e}")
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -236,8 +240,14 @@ async def startup():
     print("\n" + "=" * 50)
     print("  AUMOv3.1 ML Service Starting...")
     print("=" * 50)
-    state["model"] = load_model_local()
-    if state["model"] is None:
+    # Ensure saved_models directory exists
+    os.makedirs("saved_models", exist_ok=True)
+    loaded = load_model_local()
+    if loaded is not None:
+        state["model"] = loaded
+        print(f"[ML] Pre-trained model loaded successfully")
+    else:
+        print(f"[ML] No saved model found — starting auto-train in background")
         import threading
         threading.Thread(target=_auto_train, daemon=True).start()
     print(f"[ML] Service ready on port {API_PORT}")
