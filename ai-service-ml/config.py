@@ -27,10 +27,6 @@ IS_HF_SPACE = os.getenv("SPACE_ID") is not None
 API_PORT = int(os.getenv("PORT", "7860" if IS_HF_SPACE else "8001"))
 MODEL_PATH = os.getenv("MODEL_PATH", "saved_models/traffic_lstm.pt")
 
-# HuggingFace dataset for persisting model + data
-HF_DATASET_REPO = os.getenv("HF_DATASET_REPO", "Qrmanual/AUMO")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5000",

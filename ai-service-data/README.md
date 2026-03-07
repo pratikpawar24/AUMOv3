@@ -12,7 +12,7 @@ short_description: AUMOv3 Places Database & Location Search Service
 # 📍 AUMOv3.2 — Places Database & Location Service
 
 Fast location search for Maharashtra — shops, stations, roads, colonies, chowks.
-Caches data from OpenStreetMap Overpass API and stores in HuggingFace Dataset.
+Caches data from OpenStreetMap Overpass API for fast local lookups.
 
 ## Endpoints
 - `GET /api/places/search?q=...` — Search places by name

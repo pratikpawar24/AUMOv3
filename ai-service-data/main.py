@@ -1,10 +1,11 @@
 """
 AUMOv3.2 — Data & Places Service
-Handles POI database, Overpass place lookups, caching to HuggingFace Dataset.
+Handles POI database, Overpass place lookups, local caching.
 No PyTorch dependency — lightweight and fast startup.
 """
 
 import os, json, math, time, asyncio, logging
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from config import (
-    API_PORT, CORS_ORIGINS, HF_DATASET_REPO, HF_TOKEN,
+    API_PORT, CORS_ORIGINS,
     MH_BBOX, PRELOAD_CITIES,
 )
 
@@ -336,10 +337,7 @@ OTHER_POIS = [
 
 ALL_POIS: List[Dict[str, Any]] = PUNE_POIS + MUMBAI_POIS + NAGPUR_POIS + NASHIK_POIS + OTHER_POIS
 
-# Extended POI dataset loaded from HuggingFace (filled on startup)
-EXTENDED_POIS: List[Dict[str, Any]] = []
-
-# Combined searchable POIs (hardcoded + extended)
+# Searchable POIs (hardcoded database — extended via live Overpass/Nominatim at runtime)
 SEARCHABLE_POIS: List[Dict[str, Any]] = list(ALL_POIS)
 
 # ═══════════════════════════════════════════════════════════════
@@ -378,82 +376,6 @@ def _save_local_cache():
             json.dump(_places_cache, f)
     except Exception as e:
         logger.warning(f"Could not save local cache: {e}")
-
-
-async def save_cache_to_hf():
-    """Upload the places cache to HuggingFace Dataset for persistence."""
-    if not HF_TOKEN:
-        logger.warning("No HF_TOKEN — skipping dataset upload")
-        return
-    try:
-        from huggingface_hub import HfApi
-        api = HfApi(token=HF_TOKEN)
-        cache_bytes = json.dumps(_places_cache, indent=2).encode("utf-8")
-        api.upload_file(
-            path_or_fileobj=cache_bytes,
-            path_in_repo="places_cache.json",
-            repo_id=HF_DATASET_REPO,
-            repo_type="dataset",
-        )
-        logger.info(f"Uploaded places cache ({len(_places_cache)} entries) to HF dataset")
-    except Exception as e:
-        logger.warning(f"HF cache upload failed: {e}")
-
-
-async def load_cache_from_hf():
-    """Download the places cache from HuggingFace Dataset."""
-    global _places_cache
-    if not HF_TOKEN:
-        return
-    try:
-        from huggingface_hub import hf_hub_download
-        path = hf_hub_download(
-            repo_id=HF_DATASET_REPO,
-            filename="places_cache.json",
-            repo_type="dataset",
-            token=HF_TOKEN,
-        )
-        with open(path, "r") as f:
-            _places_cache = json.load(f)
-        logger.info(f"Loaded {len(_places_cache)} entries from HF dataset cache")
-    except Exception as e:
-        logger.info(f"No HF cache found (first run?): {e}")
-
-
-async def load_extended_pois_from_hf():
-    """Download the massive POI dataset from HuggingFace Dataset."""
-    global EXTENDED_POIS, SEARCHABLE_POIS
-    if not HF_TOKEN:
-        logger.info("No HF_TOKEN — extended POIs not loaded")
-        return
-    try:
-        from huggingface_hub import hf_hub_download
-        path = hf_hub_download(
-            repo_id=HF_DATASET_REPO,
-            filename="maharashtra_pois.json",
-            repo_type="dataset",
-            token=HF_TOKEN,
-        )
-        with open(path, "r", encoding="utf-8") as f:
-            EXTENDED_POIS = json.load(f)
-
-        # Merge: hardcoded + extended, deduplicate by name+coords
-        seen = set()
-        combined = []
-        for p in ALL_POIS:
-            key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
-            if key not in seen:
-                seen.add(key)
-                combined.append(p)
-        for p in EXTENDED_POIS:
-            key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
-            if key not in seen:
-                seen.add(key)
-                combined.append(p)
-        SEARCHABLE_POIS = combined
-        logger.info(f"Loaded {len(EXTENDED_POIS)} extended POIs from HF → total searchable: {len(SEARCHABLE_POIS)}")
-    except Exception as e:
-        logger.info(f"No extended POI dataset found on HF: {e}")
 
 
 async def fetch_overpass_places(
@@ -628,9 +550,7 @@ app.add_middleware(
 async def startup():
     logger.info("AUMOv3.2 Data Service starting...")
     _load_local_cache()
-    await load_cache_from_hf()
-    await load_extended_pois_from_hf()
-    logger.info(f"Loaded {len(ALL_POIS)} hardcoded + {len(EXTENDED_POIS)} extended POIs = {len(SEARCHABLE_POIS)} total")
+    logger.info(f"Loaded {len(ALL_POIS)} hardcoded POIs = {len(SEARCHABLE_POIS)} total searchable")
     logger.info(f"Cache entries: {len(_places_cache)}")
     logger.info("Data Service ready!")
 
@@ -854,10 +774,10 @@ async def poi_cities():
 
 @app.post("/api/data/save-cache")
 async def save_cache():
-    """Save current places cache to HuggingFace Dataset."""
-    await save_cache_to_hf()
+    """Save current places cache to local disk."""
+    _save_local_cache()
     return {
-        "message": "Cache saved to HuggingFace",
+        "message": "Cache saved locally",
         "entries": len(_places_cache),
     }
 
@@ -876,8 +796,7 @@ async def refresh_data():
         except Exception as e:
             logger.warning(f"Failed to refresh {city['name']}: {e}")
 
-    # Save to HF
-    await save_cache_to_hf()
+    _save_local_cache()
 
     return {
         "message": f"Refreshed {fetched} places across {len(PRELOAD_CITIES[:4])} cities",
@@ -901,7 +820,6 @@ async def data_stats():
     return {
         "total_pois": len(SEARCHABLE_POIS),
         "hardcoded_pois": len(ALL_POIS),
-        "extended_pois": len(EXTENDED_POIS),
         "cache_entries": len(_places_cache),
         "cities": city_counts,
         "types": type_counts,
@@ -909,7 +827,7 @@ async def data_stats():
 
 
 # ═══════════════════════════════════════════════════════════════
-# DATASET BUILDER — runs ON HuggingFace infrastructure
+# DATASET BUILDER — fetches POIs from Overpass API, saves locally
 # ═══════════════════════════════════════════════════════════════
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
@@ -1037,13 +955,12 @@ async def _fetch_category(cat_name: str, query_tpl: str, bbox_str: str, cell_lab
     return pois
 
 
-async def _run_dataset_builder(write_token: str = ""):
-    """Background task: fetch all categories from Overpass and upload to HF.
+async def _run_dataset_builder():
+    """Background task: fetch all categories from Overpass and save locally.
     Light categories → single query for full Maharashtra bbox.
     Heavy categories → split into grid cells (2°×2.8°).
     """
-    global BUILDER_STATUS, EXTENDED_POIS, SEARCHABLE_POIS
-    token = write_token or HF_TOKEN
+    global BUILDER_STATUS, SEARCHABLE_POIS
     BUILDER_STATUS = {"running": True, "progress": "starting", "category": "", "done": 0, "total": len(BUILDER_CATEGORIES), "results": {}}
     full_bbox = (MH_BBOX["south"], MH_BBOX["west"], MH_BBOX["north"], MH_BBOX["east"])
     full_bbox_str = f"{full_bbox[0]},{full_bbox[1]},{full_bbox[2]},{full_bbox[3]}"
@@ -1058,18 +975,16 @@ async def _run_dataset_builder(write_token: str = ""):
 
         cat_pois = []
         if cat_name in _HEAVY_CATEGORIES:
-            # Heavy category → split into grid cells
             logger.info(f"[BUILDER] {BUILDER_STATUS['progress']} across {len(grid_cells)} cells (heavy)")
             for ci, (s, w, n, e) in enumerate(grid_cells):
                 cell_bbox = f"{s},{w},{n},{e}"
                 pois = await _fetch_category(cat_name, query_tpl, cell_bbox, f" cell {ci+1}/{len(grid_cells)}")
                 cat_pois.extend(pois)
-                await asyncio.sleep(3)  # rate limit between cells
+                await asyncio.sleep(3)
         else:
-            # Light category → single query for full Maharashtra
             logger.info(f"[BUILDER] {BUILDER_STATUS['progress']} (full bbox)")
             cat_pois = await _fetch_category(cat_name, query_tpl, full_bbox_str)
-            await asyncio.sleep(5)  # rate limit between categories
+            await asyncio.sleep(5)
 
         cat_counts[cat_name] = len(cat_pois)
         all_data.extend(cat_pois)
@@ -1087,25 +1002,21 @@ async def _run_dataset_builder(write_token: str = ""):
 
     logger.info(f"[BUILDER] Total: {len(all_data):,} raw → {len(final):,} unique")
 
-    # Upload to HuggingFace
-    BUILDER_STATUS["progress"] = "Uploading to HuggingFace..."
-    if token:
-        try:
-            from huggingface_hub import HfApi
-            api = HfApi(token=token)
-            data_bytes = json.dumps(final, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            api.upload_file(path_or_fileobj=data_bytes, path_in_repo="maharashtra_pois.json", repo_id=HF_DATASET_REPO, repo_type="dataset")
-            stats = {"total_unique_places": len(final), "total_raw": len(all_data), "categories": cat_counts, "generated_at": datetime.utcnow().isoformat() + "Z"}
-            stats_bytes = json.dumps(stats, indent=2).encode("utf-8")
-            api.upload_file(path_or_fileobj=stats_bytes, path_in_repo="dataset_stats.json", repo_id=HF_DATASET_REPO, repo_type="dataset")
-            logger.info(f"[BUILDER] Uploaded {len(final):,} POIs to {HF_DATASET_REPO}")
-        except Exception as e:
-            logger.error(f"[BUILDER] Upload failed: {e}")
-    else:
-        logger.warning("[BUILDER] No HF_TOKEN — skipping upload. Use /api/data/save-dataset to save later.")
+    # Save locally
+    BUILDER_STATUS["progress"] = "Saving locally..."
+    try:
+        cache_dir = Path("/app/cache") if os.path.exists("/app") else Path("./cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        pois_path = cache_dir / "maharashtra_pois.json"
+        pois_path.write_text(json.dumps(final, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        stats = {"total_unique_places": len(final), "total_raw": len(all_data), "categories": cat_counts, "generated_at": datetime.utcnow().isoformat() + "Z"}
+        stats_path = cache_dir / "dataset_stats.json"
+        stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+        logger.info(f"[BUILDER] Saved {len(final):,} POIs to {pois_path}")
+    except Exception as e:
+        logger.error(f"[BUILDER] Local save failed: {e}")
 
-    # Reload into memory
-    EXTENDED_POIS = final
+    # Reload into memory — merge with hardcoded ALL_POIS
     seen2 = set()
     combined = []
     for p in ALL_POIS:
@@ -1113,7 +1024,7 @@ async def _run_dataset_builder(write_token: str = ""):
         if key not in seen2:
             seen2.add(key)
             combined.append(p)
-    for p in EXTENDED_POIS:
+    for p in final:
         key = f"{p['name'].lower()}|{round(p['lat'],3)}|{round(p['lng'],3)}"
         if key not in seen2:
             seen2.add(key)
@@ -1124,21 +1035,12 @@ async def _run_dataset_builder(write_token: str = ""):
     BUILDER_STATUS.update({"running": False, "progress": "complete", "done": len(BUILDER_CATEGORIES), "results": {"total_unique": len(final), "total_raw": len(all_data), "categories": cat_counts}})
 
 
-class BuildDatasetRequest(BaseModel):
-    token: str = ""  # HF write token, optional — falls back to env HF_TOKEN
-
-
-class SaveDatasetRequest(BaseModel):
-    token: str  # HF write token — required
-
-
 @app.post("/api/data/build-dataset")
-async def build_dataset(req: BuildDatasetRequest = BuildDatasetRequest()):
-    """Trigger dataset build on HF server. Returns immediately, runs in background."""
+async def build_dataset():
+    """Trigger dataset build. Returns immediately, runs in background."""
     if BUILDER_STATUS.get("running"):
         return {"status": "already_running", "progress": BUILDER_STATUS["progress"], "category": BUILDER_STATUS["category"], "done": BUILDER_STATUS["done"], "total": BUILDER_STATUS["total"]}
-    write_token = req.token or HF_TOKEN
-    asyncio.create_task(_run_dataset_builder(write_token))
+    asyncio.create_task(_run_dataset_builder())
     return {"status": "started", "message": "Dataset builder started in background. Check /api/data/build-status for progress.", "categories": len(BUILDER_CATEGORIES)}
 
 
@@ -1146,60 +1048,6 @@ async def build_dataset(req: BuildDatasetRequest = BuildDatasetRequest()):
 async def build_status():
     """Check dataset build progress."""
     return BUILDER_STATUS
-
-
-@app.post("/api/data/save-dataset")
-async def save_dataset(req: SaveDatasetRequest):
-    """Save current in-memory EXTENDED_POIS to HuggingFace dataset.
-    Use this if the builder completed but the upload failed (e.g. missing token).
-    """
-    if not EXTENDED_POIS and len(SEARCHABLE_POIS) <= len(ALL_POIS):
-        raise HTTPException(400, "No extended POI data in memory. Run build-dataset first.")
-
-    # Use EXTENDED_POIS if available, else everything beyond hardcoded
-    data_to_save = EXTENDED_POIS if EXTENDED_POIS else [
-        p for p in SEARCHABLE_POIS if p not in ALL_POIS
-    ]
-    if not data_to_save:
-        raise HTTPException(400, "No extended data to save.")
-
-    try:
-        from huggingface_hub import HfApi
-        api = HfApi(token=req.token)
-        data_bytes = json.dumps(data_to_save, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        api.upload_file(
-            path_or_fileobj=data_bytes,
-            path_in_repo="maharashtra_pois.json",
-            repo_id=HF_DATASET_REPO,
-            repo_type="dataset",
-        )
-        # Also save stats
-        cat_counts = {}
-        for p in data_to_save:
-            t = p.get("type", "unknown")
-            cat_counts[t] = cat_counts.get(t, 0) + 1
-        stats = {
-            "total_unique_places": len(data_to_save),
-            "categories": cat_counts,
-            "saved_at": datetime.utcnow().isoformat() + "Z",
-        }
-        stats_bytes = json.dumps(stats, indent=2).encode("utf-8")
-        api.upload_file(
-            path_or_fileobj=stats_bytes,
-            path_in_repo="dataset_stats.json",
-            repo_id=HF_DATASET_REPO,
-            repo_type="dataset",
-        )
-        logger.info(f"[SAVE] Uploaded {len(data_to_save):,} POIs to {HF_DATASET_REPO}")
-        return {
-            "status": "saved",
-            "pois_uploaded": len(data_to_save),
-            "repo": HF_DATASET_REPO,
-            "size_mb": round(len(data_bytes) / 1024 / 1024, 2),
-        }
-    except Exception as e:
-        logger.error(f"[SAVE] Upload failed: {e}")
-        raise HTTPException(500, f"Upload failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════

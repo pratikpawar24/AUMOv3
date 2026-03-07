@@ -4,7 +4,7 @@ AUMOv3.1 — ML Traffic Prediction Microservice
 Lightweight service that only handles:
   - Traffic prediction (BiLSTM + Attention)
   - Model training
-  - Model persistence to HuggingFace Dataset
+  - Model persistence (local)
 """
 
 import os
@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from config import model_config, API_PORT, CORS_ORIGINS, MODEL_PATH, HF_DATASET_REPO, HF_TOKEN
+from config import model_config, API_PORT, CORS_ORIGINS, MODEL_PATH
 
 # ═══════════════════════════════════════════════════════════════
 # Model Definition (self-contained, no external deps)
@@ -147,61 +147,31 @@ def generate_dataset(num_samples: int = 2000):
 
 
 # ═══════════════════════════════════════════════════════════════
-# HuggingFace Dataset persistence
+# Model Persistence (local only)
 # ═══════════════════════════════════════════════════════════════
 
 
-def save_model_to_hf(model: TrafficLSTM):
-    """Save trained model to HuggingFace Dataset repo for persistence."""
+def save_model_local(model: TrafficLSTM):
+    """Save trained model locally."""
     try:
         os.makedirs("saved_models", exist_ok=True)
-        path = "saved_models/traffic_lstm.pt"
+        path = MODEL_PATH
         torch.save(model.state_dict(), path)
         print(f"[ML] Model saved locally to {path}")
-
-        if HF_TOKEN:
-            from huggingface_hub import HfApi
-            api = HfApi(token=HF_TOKEN)
-            api.upload_file(
-                path_or_fileobj=path,
-                path_in_repo="models/traffic_lstm.pt",
-                repo_id=HF_DATASET_REPO,
-                repo_type="dataset",
-            )
-            print(f"[ML] Model uploaded to HF dataset: {HF_DATASET_REPO}")
     except Exception as e:
-        print(f"[ML] HF upload error: {e}")
+        print(f"[ML] Save error: {e}")
 
 
-def load_model_from_hf() -> TrafficLSTM:
-    """Load model from HF Dataset or local, or use random init."""
+def load_model_local() -> TrafficLSTM:
+    """Load model from local file, or use random init."""
     model = TrafficLSTM()
-    local_path = MODEL_PATH
-
-    # Try downloading from HF Dataset first
-    if HF_TOKEN:
-        try:
-            from huggingface_hub import hf_hub_download
-            local_path = hf_hub_download(
-                repo_id=HF_DATASET_REPO,
-                filename="models/traffic_lstm.pt",
-                repo_type="dataset",
-                token=HF_TOKEN,
-                local_dir="saved_models",
-            )
-            print(f"[ML] Model downloaded from HF dataset")
-        except Exception as e:
-            print(f"[ML] HF download failed: {e}")
-
-    # Load weights
     try:
-        state_dict = torch.load(local_path, map_location="cpu", weights_only=True)
+        state_dict = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
-        print(f"[ML] Model loaded from {local_path}")
+        print(f"[ML] Model loaded from {MODEL_PATH}")
     except Exception as e:
         print(f"[ML] Using random init: {e}")
-
     return model
 
 
@@ -253,8 +223,8 @@ def _auto_train():
 
         model.eval()
         state["model"] = model
-        save_model_to_hf(model)
-        print("[ML] Auto-training complete, model saved to HF Dataset")
+        save_model_local(model)
+        print("[ML] Auto-training complete, model saved")
     except Exception as e:
         print(f"[ML] Auto-training error: {e}")
     finally:
@@ -266,7 +236,7 @@ async def startup():
     print("\n" + "=" * 50)
     print("  AUMOv3.1 ML Service Starting...")
     print("=" * 50)
-    state["model"] = load_model_from_hf()
+    state["model"] = load_model_local()
     if state["model"] is None:
         import threading
         threading.Thread(target=_auto_train, daemon=True).start()
@@ -364,7 +334,7 @@ async def train_model(background_tasks: BackgroundTasks):
 
             model.eval()
             state["model"] = model
-            save_model_to_hf(model)
+            save_model_local(model)
             print("[ML] Training complete, model saved")
         except Exception as e:
             print(f"[ML] Training error: {e}")
